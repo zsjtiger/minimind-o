@@ -6,16 +6,19 @@ from flask_cors import CORS
 from flask_sock import Sock
 from PIL import Image
 from pydub import AudioSegment
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from model.model_omni import MiniMindOmni, RealtimeSession
-from trainer.trainer_utils import log_model_params
+from baize_v.models import MiniMindOmni
+from baize_v.inference.realtime import RealtimeSession
+from baize_v.inference.loader import scan_hf_models
+from baize_v.train.init import log_model_params
+from baize_v.paths import SENSEVOICE_DIR, SIGLIP_DIR, MIMI_DIR, CAMPPLUS_DIR, SPEAKER_DIR, VAD_PATH
 logging.getLogger().setLevel(logging.ERROR)
 with contextlib.redirect_stdout(io.StringIO()):
     from funasr import AutoModel
     from funasr.utils.postprocess_utils import rich_transcription_postprocess
 
-app = Flask(__name__, static_folder='.')
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
+app = Flask(__name__, static_folder=STATIC_DIR)
 CORS(app)
 sock = Sock(app)
 M = {}  # model / tokenizer / device / mimi / asr / cfg
@@ -30,18 +33,6 @@ CLONE_FILE = 'voice_clone.pt'
 # -------- helpers --------
 def sse(d): return f"data: {json.dumps(d)}\n\n"
 
-def scan_hf_models(base_dir):
-    models = {}
-    base_dir = os.path.abspath(base_dir)
-    for d in sorted(os.listdir(base_dir), reverse=True):
-        full_path = os.path.join(base_dir, d)
-        if not os.path.isdir(full_path) or d.startswith('.') or d.startswith('_'):
-            continue
-        files = set(os.listdir(full_path))
-        has_model = bool(files & {'pytorch_model.bin', 'model.safetensors', 'pytorch_model.bin.index.json', 'model.safetensors.index.json'})
-        if has_model:
-            models[d] = full_path
-    return models
 
 def asr_run(samples):
     r = M['asr'].generate(input=samples, cache={}, language='auto', use_itn=True)
@@ -117,7 +108,7 @@ def register_voice(name, value, group='manual'):
             lst.remove(name)
 
 def clone_voice_path():
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'model', 'speaker', CLONE_FILE)
+    return os.path.join(SPEAKER_DIR, CLONE_FILE)
 
 def delete_manual_voice(name):
     if name not in V_manual:
@@ -203,8 +194,8 @@ def load_main_model(model_path, model_name):
         if torch.cuda.is_available(): torch.cuda.empty_cache()
         tok = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         m = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True)
-        vision_encoder, vision_processor = MiniMindOmni.load_vision('../model/siglip2-base-p32-256-ve')
-        audio_encoder, audio_processor = MiniMindOmni.load_sensevoice('../model/SenseVoiceSmall')
+        vision_encoder, vision_processor = MiniMindOmni.load_vision(SIGLIP_DIR)
+        audio_encoder, audio_processor = MiniMindOmni.load_sensevoice(SENSEVOICE_DIR)
         object.__setattr__(m, 'vision_encoder', vision_encoder)
         object.__setattr__(m, 'vision_processor', vision_processor)
         object.__setattr__(m, 'audio_encoder', audio_encoder)
@@ -241,9 +232,9 @@ def prepare_turn(text, samples, image_b64, do_asr_for_image):
 
 # -------- routes --------
 @app.route('/')
-def index(): return send_from_directory('.', 'web_demo.html')
+def index(): return send_from_directory(STATIC_DIR, 'web_demo.html')
 @app.route('/call')
-def call_page(): return send_from_directory('.', 'web_demo.html')
+def call_page(): return send_from_directory(STATIC_DIR, 'web_demo.html')
 
 @app.route('/voices')
 def get_voices():
@@ -277,7 +268,7 @@ def clone_voice():
         saved[name] = value
         torch.save(saved, out_path)
         register_voice(name, value, group='manual')
-        return Response(json.dumps({'ok': True, 'voice': name, 'path': './model/speaker/' + CLONE_FILE}), mimetype='application/json')
+        return Response(json.dumps({'ok': True, 'voice': name, 'path': 'assets/speaker/' + CLONE_FILE}), mimetype='application/json')
     except Exception as e:
         return Response(json.dumps({'ok': False, 'error': str(e)}), status=500, mimetype='application/json')
 
@@ -443,7 +434,7 @@ def realtime(ws):
 def init_model(args):
     M['cfg'] = args; M['device'] = args.device
     with contextlib.redirect_stdout(io.StringIO()):
-        M['asr'] = AutoModel(model='../model/SenseVoiceSmall', trust_remote_code=True, device=args.device, disable_update=True)
+        M['asr'] = AutoModel(model=SENSEVOICE_DIR, trust_remote_code=True, device=args.device, disable_update=True)
     M['models'] = scan_hf_models(args.load_from)
     if not M['models']:
         raise RuntimeError(f"未在 {os.path.abspath(args.load_from)} 找到 transformers 模型")
@@ -451,7 +442,7 @@ def init_model(args):
     load_main_model(M['models'][model_name], model_name)
     try:
         from transformers import MimiModel
-        M['mimi'] = MimiModel.from_pretrained('../model/mimi').eval().to(args.device)
+        M['mimi'] = MimiModel.from_pretrained(MIMI_DIR).eval().to(args.device)
         if args.device != 'cpu': M['mimi'] = M['mimi'].half()
         print('Mimi model loaded')
     except: M['mimi'] = None
@@ -459,7 +450,7 @@ def init_model(args):
         from modelscope.models.audio.sv.DTDNN import CAMPPlus
         M['campplus'] = CAMPPlus(feat_dim=80, embedding_size=192, growth_rate=32, bn_size=4,
                                  init_channels=128, config_str='batchnorm-relu', memory_efficient=True)
-        sd = torch.load('../model/campplus/campplus_cn_common.pt', map_location='cpu')
+        sd = torch.load(os.path.join(CAMPPLUS_DIR, 'campplus_cn_common.pt'), map_location='cpu')
         M['campplus'].load_state_dict({k: v.float() for k, v in sd.items()})
         M['campplus'] = M['campplus'].eval().to(args.device)
         M['mel_fn'] = torchaudio.transforms.MelSpectrogram(
@@ -470,8 +461,8 @@ def init_model(args):
     except Exception as e:
         M['campplus'], M['mel_fn'] = None, None
         print(f'CAM++ load failed: {e}')
-    M['vad_path'] = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'model', 'vad', 'silero_vad.onnx')
-    spk_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'model', 'speaker')
+    M['vad_path'] = VAD_PATH
+    spk_dir = SPEAKER_DIR
     for fn, group in [('voices.pt', 'builtin'), ('voices_unseen.pt', 'unseen'), (CLONE_FILE, 'manual')]:
         fp = os.path.join(spk_dir, fn)
         if os.path.exists(fp):

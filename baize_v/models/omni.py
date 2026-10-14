@@ -1,110 +1,18 @@
-import os, math, torch, soundfile as sf, librosa, warnings, numpy as np, onnxruntime as ort, logging, contextlib, io
-from types import SimpleNamespace
-from torch import nn
-from torch.nn import functional as F
-from transformers.modeling_outputs import MoeCausalLMOutputWithPast
+import os, torch, warnings, contextlib, io, logging
+import torch.nn.functional as F
 from transformers import SiglipImageProcessor, SiglipVisionModel, logging as hf_logging
-from .model_minimind import *
-
-
-class OmniConfig(MiniMindConfig):
-    model_type = "minimind-o"
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.num_talker_hidden_layers = kwargs.get("num_talker_hidden_layers", 4)
-        self.talker_hidden_size = kwargs.get("talker_hidden_size", 768)
-        self.audio_ids = kwargs.get("audio_ids", [16]) # "<|audio_pad|>" token id
-        self.audio_special_token = kwargs.get("audio_special_token", "<|audio_pad|>")
-        self.audio_hidden_size = kwargs.get("audio_hidden_size", 512)
-        self.audio_vocab_size = kwargs.get("audio_vocab_size", 2112)
-        self.audio_pad_token = kwargs.get("audio_pad_token", 2049)
-        self.audio_stop_token = kwargs.get("audio_stop_token", 2050)
-        self.audio_spk_token = kwargs.get("audio_spk_token", 2051)
-        self.spk_emb_size = kwargs.get("spk_emb_size", 192)
-        self.think_end_ids = kwargs.get("think_end_ids", [26, 234, 234]) # </think>\n\n
-        self.image_ids = kwargs.get("image_ids", [12]) # "<|image_pad|>" token id
-        self.image_special_token = kwargs.get("image_special_token", "<|image_pad|>")
-        self.image_hidden_size = kwargs.get("image_hidden_size", 768)
-        self.image_token_len = kwargs.get("image_token_len", 64)
-        self.bridge_layer = kwargs.get("bridge_layer", self.num_hidden_layers // 2 - 1)
-
-class MMAudioProjector(nn.Module):
-    def __init__(self, in_dim, out_dim):
-        super().__init__()
-        self.mlp = nn.Sequential(
-            nn.LayerNorm(in_dim),
-            nn.Linear(in_dim, out_dim),
-            nn.GELU(),
-            nn.Linear(out_dim, out_dim),
-        )
-    def forward(self, x):
-        return self.mlp(x)
-
-
-class MMVisionProjector(nn.Module):
-    def __init__(self, in_dim, out_dim, source_tokens=64, target_tokens=64):
-        super().__init__()
-        self.mlp = nn.Sequential(
-            nn.LayerNorm(in_dim),
-            nn.Linear(in_dim, out_dim),
-            nn.GELU(),
-            nn.Linear(out_dim, out_dim),
-        )
-    def forward(self, x):
-        return self.mlp(x)
-
-
-class TalkerHead(nn.Module):
-    def __init__(self, in_features, out_features, num_layers=8, rank=256):
-        super().__init__()
-        self.num_layers = num_layers
-        self.base = nn.Linear(in_features, out_features, bias=False)
-        self.adapters = nn.ModuleList([nn.Sequential(nn.Linear(in_features, rank, bias=False), nn.GELU(), nn.Linear(rank, out_features, bias=False)) for _ in range(num_layers)])
-    def forward(self, x):
-        base_out = self.base(x)
-        return [base_out + adapter(x) for adapter in self.adapters]
-
-
-class TalkerEmbedding(nn.Module):
-    def __init__(self, num_embeddings, embedding_dim, num_layers=8, rank=256):
-        super().__init__()
-        self.num_layers = num_layers
-        self.base = nn.Embedding(num_embeddings, embedding_dim)
-        self.adapters = nn.ModuleList([nn.Sequential(nn.Embedding(num_embeddings, rank), nn.GELU(), nn.Linear(rank, embedding_dim, bias=False)) for _ in range(num_layers)])
-    def forward(self, x):
-        base_out = self.base(x)
-        return sum(base_out[:, i, :] + self.adapters[i](x[:, i, :]) for i in range(len(self.adapters))) / self.num_layers
-
-class SenseVoiceAudioProcessor:
-    def __init__(self, frontend): self.frontend = frontend
-    def __call__(self, wav, sampling_rate=16000, return_tensors="pt", return_attention_mask=True, **kwargs):
-        if isinstance(wav, np.ndarray): wav = torch.from_numpy(wav).float()
-        if wav.dim() == 1: wav = wav.unsqueeze(0)
-        with torch.no_grad():
-            fbank, flen = self.frontend(wav, torch.tensor([wav.size(1)]))
-        return SimpleNamespace(input_features=fbank, attention_mask=(torch.arange(fbank.size(1)) < flen[0]).long().unsqueeze(0))
-
-
-class TalkerModule(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.talker_config = MiniMindConfig(hidden_size=config.talker_hidden_size, use_moe=config.use_moe)
-        self.layers = nn.ModuleList([MiniMindBlock(l, self.talker_config) for l in range(config.num_talker_hidden_layers)])
-        self.norm = RMSNorm(config.talker_hidden_size, eps=config.rms_norm_eps)
-        self.lm_head = TalkerHead(config.talker_hidden_size, config.audio_vocab_size)
-        self.embed_tokens = TalkerEmbedding(config.audio_vocab_size, config.talker_hidden_size)
-        self.codec_proj = nn.Sequential(nn.Linear(config.talker_hidden_size, config.talker_hidden_size), nn.GELU(), nn.Linear(config.talker_hidden_size, config.talker_hidden_size), RMSNorm(config.talker_hidden_size, eps=config.rms_norm_eps))
-        self.embed_proj = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size), nn.GELU(), nn.Linear(config.hidden_size, config.talker_hidden_size), RMSNorm(config.talker_hidden_size, eps=config.rms_norm_eps))
-        self.text_scale, self.audio_scale = nn.Parameter(torch.tensor(3.0)), nn.Parameter(torch.tensor(1.0))
-        self.spk_proj = nn.Linear(config.spk_emb_size, config.talker_hidden_size, bias=False)
-        freqs_cos, freqs_sin = precompute_freqs_cis(dim=self.talker_config.head_dim, end=config.max_position_embeddings, rope_base=config.rope_theta, rope_scaling=config.rope_scaling)
-        self.register_buffer("freqs_cos", freqs_cos, persistent=False)
-        self.register_buffer("freqs_sin", freqs_sin, persistent=False)
+from transformers.modeling_outputs import MoeCausalLMOutputWithPast
+from ..config import OmniConfig
+from .minimind import MiniMindForCausalLM, MOEFeedForward, precompute_freqs_cis
+from .projectors import MMAudioProjector, MMVisionProjector
+from .talker import TalkerModule
+from .encoders import SenseVoiceAudioProcessor
+from ..paths import SENSEVOICE_DIR, SIGLIP_DIR
 
 
 class MiniMindOmni(MiniMindForCausalLM):
     config_class = OmniConfig
-    def __init__(self, config: OmniConfig = None, audio_encoder_path="./model/SenseVoiceSmall", vision_model_path="./model/siglip2-base-p32-256-ve"):
+    def __init__(self, config: OmniConfig = None, audio_encoder_path=SENSEVOICE_DIR, vision_model_path=SIGLIP_DIR):
         config = config or OmniConfig()
         super().__init__(config)
         object.__setattr__(self, 'thinker', self.model)  # alias: self.thinker == self.model
@@ -394,69 +302,3 @@ class MiniMindOmni(MiniMindForCausalLM):
             else:
                 yield None, audio_frame
 
-
-# ==== Realtime VAD (与模型本体零耦合，纯工程层) ====
-class SileroVAD:
-    def __init__(self, path):
-        opts = ort.SessionOptions()
-        opts.inter_op_num_threads = opts.intra_op_num_threads = 1
-        opts.log_severity_level = 4
-        self.session = ort.InferenceSession(path, providers=["CPUExecutionProvider"], sess_options=opts)
-        self.h, self.c = np.zeros((2, 1, 64), dtype=np.float32), np.zeros((2, 1, 64), dtype=np.float32)
-
-    def reset(self):
-        self.h[:], self.c[:] = 0, 0
-
-    def __call__(self, chunk, sr=16000):
-        out, self.h, self.c = self.session.run(None, {"input": chunk.reshape(1, -1).astype(np.float32), "h": self.h, "c": self.c, "sr": np.array(sr, dtype="int64")})
-        return float(out[0][0])
-
-
-class RealtimeSession:
-    def __init__(self, vad_path, sr=16000, threshold=0.8, min_speech_ms=128, min_silence_ms=800):
-        self.vad, self.sr, self.threshold = SileroVAD(vad_path), sr, threshold
-        self.min_speech, self.min_silence = int(sr * min_speech_ms / 1000), int(sr * min_silence_ms / 1000)
-        self.reset()
-
-    def reset(self):
-        self.vad.reset()
-        self.buffer, self.ring, self.speaking, self.generating, self.interrupt = [], [], False, False, False
-        self.speech_samples = self.silence_samples = self.tail_silence = 0
-
-    def push_chunk(self, chunk, W=1024):
-        for i in range(0, max(len(chunk), 1), W):
-            w = chunk[i:i + W]
-            if len(w) < W:
-                w = np.pad(w, (0, W - len(w)))
-            prob = self.vad(w, self.sr)
-            if prob > self.threshold:
-                self.silence_samples = self.tail_silence = 0
-                self.speech_samples += len(w)
-                self.buffer.append(w)
-                if self.speech_samples >= self.min_speech and not self.speaking:
-                    self.speaking = True
-                    self.buffer = self.ring + self.buffer
-                    self.ring = []
-                if self.generating and self.speaking:
-                    self.interrupt = True
-                    return 'interrupt'
-            elif self.speaking:
-                self.silence_samples += len(w)
-                self.tail_silence += 1
-                self.buffer.append(w)
-                if self.silence_samples >= self.min_silence:
-                    if self.tail_silence > 1:
-                        del self.buffer[-(self.tail_silence - 1):]
-                    self.speaking, self.speech_samples, self.silence_samples, self.tail_silence = False, 0, 0, 0
-                    return 'speech_end'
-            else:
-                if self.speech_samples > 0:
-                    self.buffer.clear()
-                self.speech_samples = 0
-                self.ring = [w]
-        return 'listening'
-
-    def get_audio(self):
-        audio = np.concatenate(self.buffer) if self.buffer else np.array([], dtype=np.float32)
-        self.buffer.clear()
-        return audio

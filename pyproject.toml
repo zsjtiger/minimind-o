@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "baize-v"
+version = "0.1.0"
+description = "Baize-V：基于 MiniMind 的全模态（文本 / 语音 / 图像）对话模型"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10,<3.13"  # pydub 依赖的 audioop 在 3.13 中已移除
+dependencies = [
+    "torch",
+    "torchaudio",
+    "datasets==3.6.0",
+    "soundfile==0.13.1",
+    "librosa==0.11.0",
+    "pyarrow==23.0.1",
+    "scipy",
+    "snac==1.2.1",
+    "transformers==4.57.6",
+    "speechbrain==1.1.0",
+    "onnxruntime==1.23.2",
+    "funasr==1.3.1",
+    "addict==2.4.0",
+    "flask==3.0.3",
+    "flask-cors==6.0.1",
+    "flask-sock==0.7.0",
+    "pydub==0.25.1",
+    "numpy==1.26.4",
+    "Pillow==9.5.0",
+    "swanlab==0.7.11",
+    "modelscope==1.37.0",
+]
+
+[project.optional-dependencies]
+demo = ["gradio==5.49.1"]
+dev = ["pytest", "pyflakes", "ruff"]
+
+[tool.setuptools.packages.find]
+include = ["baize_v*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 160
+target-version = "py310"
+extend-exclude = ["examples", "apps"]
+
+[tool.ruff.lint]
+select = ["E9", "F"]

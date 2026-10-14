@@ -1,6 +1,6 @@
 <div align="center">
 
-![logo](./images/logo.png)
+![logo](./docs/images/logo.png)
 
 </div>
 
@@ -58,7 +58,7 @@ GPT-4o was probably the first system that made natural streaming voice interacti
 
 MiniMind-O attempts to fill this gap: speech and text are connected directly at the hidden-state level, while the trainable backbone remains only ~0.1B parameters and the end-to-end Omni pipeline is preserved. The Talker side adopts MTP (Multi-Token Prediction) to predict multiple Mimi codebook layers at once, and combines it with VAD to support real-time barge-in and near-duplex interaction—a practical engineering route for a tiny Omni model. The code, model weights, training data and technical report are all open-sourced. A single RTX 3090 can finish training on the mini dataset in about 2 hours. The goal remains the same: let everyone read the project from the first line of code, and train, from scratch, a model that can listen, see, think and speak:
 
-![](images/omni_io_flow.png)
+![](docs/images/omni_io_flow.png)
 
 😊 Enjoy building.
 
@@ -115,6 +115,8 @@ MiniMind-O attempts to fill this gap: speech and text are connected directly at 
 
 ## Step 0 (required)
 
+> For the project layout and migration notes, see [docs/architecture.md](docs/architecture.md) and [docs/migration.md](docs/migration.md).
+
 ### 1' Environment
 
 ```bash
@@ -122,19 +124,21 @@ MiniMind-O attempts to fill this gap: speech and text are connected directly at 
 git clone --depth 1 https://github.com/jingyaogong/minimind-o
 # Install dependencies
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+# Install the baize_v package in editable mode (scripts import `baize_v`)
+pip install -e .
 ```
 
 ### 2' Download resources
 
 ```bash
-# Download SenseVoice-Small audio encoder to ./model/SenseVoiceSmall
-modelscope download --model gongjy/SenseVoiceSmall --local_dir ./model/SenseVoiceSmall
-# Download SigLIP2 vision encoder to ./model/siglip2-base-p32-256-ve
-modelscope download --model gongjy/siglip2-base-p32-256-ve --local_dir ./model/siglip2-base-p32-256-ve
-# Download Mimi audio codec to ./model/mimi
-modelscope download --model gongjy/mimi --local_dir ./model/mimi
-# Download CAM++ speaker encoder to ./model/campplus
-modelscope download --model gongjy/campplus --local_dir ./model/campplus
+# Download SenseVoice-Small audio encoder to ./pretrained/SenseVoiceSmall
+modelscope download --model gongjy/SenseVoiceSmall --local_dir ./pretrained/SenseVoiceSmall
+# Download SigLIP2 vision encoder to ./pretrained/siglip2-base-p32-256-ve
+modelscope download --model gongjy/siglip2-base-p32-256-ve --local_dir ./pretrained/siglip2-base-p32-256-ve
+# Download Mimi audio codec to ./pretrained/mimi
+modelscope download --model gongjy/mimi --local_dir ./pretrained/mimi
+# Download CAM++ speaker encoder to ./pretrained/campplus
+modelscope download --model gongjy/campplus --local_dir ./pretrained/campplus
 # Download MiniMind LLM weights to ./out (used as the language backbone for training Omni)
 modelscope download --model gongjy/minimind-3o-pytorch llm_768.pth --local_dir ./out
 ```
@@ -145,7 +149,7 @@ After downloading, the directory should look like:
 
 ```text
 minimind-o/
-├── model/
+├── pretrained/
 │   ├── SenseVoiceSmall/
 │   ├── siglip2-base-p32-256-ve/
 │   ├── mimi/
@@ -168,27 +172,24 @@ modelscope download --model gongjy/minimind-3o-pytorch --local_dir ./out
 ### 2' Command-line chat
 
 ```bash
-python eval_omni.py --load_from model --weight sft_omni
+python scripts/evaluate.py --load_from torch --weight sft_omni
 ```
 
 To use the Transformers-format model, download the model directory first:
 
 ```bash
-git clone https://huggingface.co/jingyaogong/minimind-3o
-python eval_omni.py --load_from minimind-3o
+git clone https://huggingface.co/jingyaogong/minimind-3o out/minimind-3o
+python scripts/evaluate.py --load_from out/minimind-3o
 ```
 
 ### 3' Launch WebUI (optional)
 
 ```bash
-# ⚠️ Copy the Transformers-format model folder into ./scripts/. The web_demo_omni script
-#    automatically scans this directory for sub-folders that contain weight files; it
-#    raises an error if none is found.
-cp -r minimind-3o ./scripts/minimind-3o
-cd scripts && python web_demo_omni.py
+# Put the Transformers-format model under ./out/ first (e.g. ./out/minimind-3o); the server scans this directory automatically
+python apps/web/server.py --load_from out
 ```
 
-Note: `scripts/web_demo_omni.py` is the non-realtime Gradio demo. Uploaded or recorded audio is resampled on the backend from its actual sample rate to 16 kHz; use `webui/web_demo.py` for realtime voice calls.
+Note: `examples/gradio_demo.py` is the non-realtime Gradio demo (uploaded or recorded audio is resampled on the backend to 16 kHz); usage is the same: `python examples/gradio_demo.py --load_from out`. Use `apps/web/server.py` for realtime voice calls.
 
 ## Ⅱ 🛠️ Training
 
@@ -210,12 +211,12 @@ For a quick start, downloading only the `_mini` parquet files from the [dataset 
 
 ### 2' Train
 
-The recommended mini training pipeline is shown below. It is meant to be run from the `trainer/` directory; equivalently, run `cd trainer && bash train.sh`:
+The recommended mini training pipeline is shown below. Run it from the repository root; equivalently, `bash scripts/recipes/mini.sh`:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 train_sft_omni.py --learning_rate 5e-4 --data_path ../dataset/sft_t2a_mini.parquet --epochs 1 --batch_size 40 --use_compile 1 --from_weight llm --save_weight sft_zero --max_seq_len 512 --use_wandb --use_moe 0
-CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 train_sft_omni.py --learning_rate 5e-4 --data_path ../dataset/sft_a2a_mini.parquet --epochs 1 --batch_size 40 --use_compile 0 --from_weight sft_zero --save_weight sft_zero --max_seq_len 640 --mode audio_proj --use_wandb --use_moe 0
-CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 train_sft_omni.py --learning_rate 2e-5 --data_path ../dataset/sft_a2a_mini.parquet --epochs 1 --batch_size 16 --use_compile 0 --from_weight sft_zero --save_weight sft_zero --max_seq_len 768 --use_wandb --use_moe 0
+CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 scripts/train_sft.py --learning_rate 5e-4 --data_path dataset/sft_t2a_mini.parquet --epochs 1 --batch_size 40 --use_compile 1 --from_weight llm --save_weight sft_zero --max_seq_len 512 --use_wandb --use_moe 0
+CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 scripts/train_sft.py --learning_rate 5e-4 --data_path dataset/sft_a2a_mini.parquet --epochs 1 --batch_size 40 --use_compile 0 --from_weight sft_zero --save_weight sft_zero --max_seq_len 640 --mode audio_proj --use_wandb --use_moe 0
+CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 scripts/train_sft.py --learning_rate 2e-5 --data_path dataset/sft_a2a_mini.parquet --epochs 1 --batch_size 16 --use_compile 0 --from_weight sft_zero --save_weight sft_zero --max_seq_len 768 --use_wandb --use_moe 0
 ```
 
 ### 3' Test the trained model (optional)
@@ -223,7 +224,7 @@ CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 train_sft
 Make sure the model `*.pth` to be tested is placed under `./out/`.
 
 ```bash
-python eval_omni.py --weight sft_omni
+python scripts/evaluate.py --weight sft_omni
 ```
 
 # 📌 Model Details
@@ -232,13 +233,13 @@ The language backbone of MiniMind-O comes from the sister project [MiniMind](htt
 
 ## Ⅰ Architecture overview
 
-![](./images/architecture.jpg)
+![](./docs/images/architecture.jpg)
 
 MiniMind-O consists of two paths: Thinker and Talker. Thinker is responsible for understanding text, speech and image inputs and producing a semantic-level text reply. Talker takes the semantic conditions from Thinker and uses MTP to jointly predict multi-codebook Mimi audio codes, which the audio decoder finally restores into streaming speech. The point is not to chain ASR, LLM and TTS together, but to keep text reasoning, speech generation and streaming interaction inside a single unified sequence.
 
 Text inputs go directly into the language backbone; speech and images are first encoded by the Audio Encoder and Vision Encoder respectively, and then projected into the MiniMind hidden space. Voice information is provided either by a Speaker Encoder or by reference-audio codes; combined with VAD at inference time, this enables listen-while-speaking, real-time barge-in and near-duplex interaction. Later sections describe the projectors, sequence layout and training objectives in more detail; for code-level details, please refer to `model/model_omni.py` and the [technical report](http://arxiv.org/abs/2605.03937).
 
-![](./images/input_token_layout.jpg)
+![](./docs/images/input_token_layout.jpg)
 
 The figure above shows how text tokens, speech features, image features and voice conditions are laid out in the input sequence.
 
@@ -256,7 +257,7 @@ Talker turns the semantic states from Thinker into 8 streams of Mimi codebook co
 
 ## Ⅴ Sequence format and streaming decoding
 
-![](./images/sequence_format.jpg)
+![](./docs/images/sequence_format.jpg)
 
 MiniMind-O places text tokens and 8 audio-code streams in the same training sample: Thinker handles the text sequence, Talker handles the audio-code sequence, and speech / image / voice conditions are injected through placeholders or reference codes. Loss on target text and target audio is computed only after the reply starts; reference and conditioning regions serve only as conditions and are not part of the reconstruction target.
 
@@ -299,7 +300,7 @@ Dataset download: [ModelScope](https://www.modelscope.cn/datasets/gongjy/minimin
 
 All speech data is stored uniformly as Mimi codes (8 codebooks, 12.5 Hz frame rate). Images are resized uniformly to 256×256 and encoded by SigLIP2 P32 into 64 patch tokens. The training data mainly comes from public Omni / speech-instruction corpora, including [VoiceAssistant-400K](https://huggingface.co/datasets/gpt-omni/VoiceAssistant-400K), [UltraChat-300K-SLAM-Omni](https://huggingface.co/datasets/worstchan/UltraChat-300K-SLAM-Omni) and others. A large amount of multi-speaker audio is additionally synthesized with Qwen3-TTS, and CAM++ is used to extract speaker embeddings as voice conditions. The I2T data follows the same source as the visual instruction data used in [MiniMind-V](https://github.com/jingyaogong/minimind-v); please refer to that project for the original composition and citations.
 
-The repository ships two training sets, **mini** and **full**. The mini set is filtered from full using the "English + no-vision" criteria and works with `train_sft_omni.py` using the default `--data_path`. Its goal is to verify the Thinker–Talker pipeline, Mimi (de)coding, sequence layout and voice-injection path at low cost, rather than to reproduce the Chinese speech ability of the released models. A Chinese Talker has to handle more complex grapheme-to-phoneme mapping, prosodic pauses and multi-speaker stability, which is clearly harder than English and cannot be expected to converge within ~2 hours on a single RTX 3090.
+The repository ships two training sets, **mini** and **full**. The mini set is filtered from full using the "English + no-vision" criteria and works with `scripts/train_sft.py` using the default `--data_path`. Its goal is to verify the Thinker–Talker pipeline, Mimi (de)coding, sequence layout and voice-injection path at low cost, rather than to reproduce the Chinese speech ability of the released models. A Chinese Talker has to handle more complex grapheme-to-phoneme mapping, prosodic pauses and multi-speaker stability, which is clearly harder than English and cannot be expected to converge within ~2 hours on a single RTX 3090.
 
 The full set corresponds to the released `minimind-3o` / `minimind-3o-moe` checkpoints and covers Chinese-English T2A / A2A as well as image-to-text. Sizes and language ratios are listed below; this is the actual training source behind the CER / voice-similarity numbers reported in the paper.
 
@@ -317,9 +318,9 @@ In `sft_t2a`, Chinese / English / mixed samples account for 45.7% / 46.5% / 7.8%
 
 ## Ⅱ Training
 
-The training entry point is `train_sft_omni.py`, and the recommended pipeline can be found in `trainer/train.sh`. Full training is not split into multiple complex pretraining stages; instead, capabilities are introduced incrementally along the data flow:
+The training entry point is `scripts/train_sft.py`, and the recommended pipeline can be found in `scripts/recipes/`. Full training is not split into multiple complex pretraining stages; instead, capabilities are introduced incrementally along the data flow:
 
-![](./images/training_pipeline.jpg)
+![](./docs/images/training_pipeline.jpg)
 
 - `sft_t2a`: align text with speech output first, so that Talker learns to generate Mimi codes under Thinker's semantic conditions;
 - `sft_a2a`: bring in speech inputs, so that the model can enter the same Thinker–Talker reply path from speech instructions;
@@ -329,11 +330,11 @@ Among training modes, `all` updates MiniMind / Talker / projectors, while `audio
 
 T2A and A2A loss curves during full training are shown below for reference:
 
-![](./images/t2a_training_curves.jpg)
+![](./docs/images/t2a_training_curves.jpg)
 
 > `sft_t2a`: text-to-speech-output path
 
-![](./images/a2a_training_curves.jpg)
+![](./docs/images/a2a_training_curves.jpg)
 
 > `sft_a2a`: loss after speech inputs are added
 
@@ -346,7 +347,7 @@ Early spikes caused by an incompatible weight resume have been removed from the 
 | PyTorch (`*.pth`) | [minimind-3o-pytorch](https://www.modelscope.cn/models/gongjy/minimind-3o-pytorch) | [minimind-3o-pytorch](https://huggingface.co/jingyaogong/minimind-3o-pytorch) |
 | Transformers | [minimind-o collection](https://modelscope.cn/collections/gongjy/MiniMind-O) | [minimind-o collection](https://huggingface.co/collections/jingyaogong/minimind-o) |
 
-> The Transformers version contains both `minimind-3o` and `minimind-3o-moe` and is suitable for direct use with `eval_omni.py` and the WebUI. The native PyTorch weights are mainly intended for training, reproducing experiments and continued fine-tuning.
+> The Transformers version contains both `minimind-3o` and `minimind-3o-moe` and is suitable for direct use with `scripts/evaluate.py` and the WebUI. The native PyTorch weights are mainly intended for training, reproducing experiments and continued fine-tuning.
 
 # 📌 Evaluation
 
@@ -551,7 +552,7 @@ These numbers should not be read as the absolute correctness of open-ended image
 
 ## Ⅴ Qualitative samples
 
-![](./images/qual_a2a.jpg)
+![](./docs/images/qual_a2a.jpg)
 
 In speech-to-speech samples, the input is real speech, Thinker organizes the semantics, and Talker renders speech. Short replies are again the more stable regime; Chinese explanatory questions usually produce coherent answers, while English pronunciation and rhythm are relatively more stable.
 
@@ -570,7 +571,7 @@ https://github.com/user-attachments/assets/354a5eec-c147-4d18-8c7a-942bd2a0b4b0
 </tr>
 </table>
 
-![](./images/image2audio_qualitative.jpg)
+![](./docs/images/image2audio_qualitative.jpg)
 
 The image-QA samples chain visual encoding, text generation and speech rendering inside the same path. The current model usually captures the main object and the rough scene, but fine-grained spatial relations, counts and attributes are still often wrong, which makes it more suitable as a reproducible baseline for tiny-model Omni pipelines.
 
@@ -591,7 +592,7 @@ https://github.com/user-attachments/assets/3e8d0a76-282d-4a9d-9726-a954cf80198a
 
 ## Ⅵ Real-time interaction
 
-![](./images/realtime_interaction.jpg)
+![](./docs/images/realtime_interaction.jpg)
 
 This is the real-time interaction interface. Once the user stops speaking, Thinker first finishes the semantic-side prefill, Talker then starts to emit audio codes incrementally, and the Mimi decoder writes the 24 kHz waveform as it receives codes. The barge-in example shows another path that is closer to a real conversation: when the user starts speaking again while the model is talking, the system interrupts the current generation and re-enters the prefill–reply flow. Interruption detection here is still based on a simple VAD threshold, not yet semantic-level barge-in; but from an engineering loop-closure perspective, the system can already fall back from speaking to listening and process the next turn.
 

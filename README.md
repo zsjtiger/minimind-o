@@ -1,6 +1,6 @@
 <div align="center">
 
-![logo](./images/logo.png)
+![logo](./docs/images/logo.png)
 
 </div>
 
@@ -59,7 +59,7 @@ https://github.com/user-attachments/assets/10cbcc5f-4e70-45cf-bdc5-d6361e40bb86
 
 MiniMind-O 尝试补上已知的空位：让语音和文本在 hidden state 层面直接连通，在主 backbone 仅 0.1B 的规模下保留端到端 Omni 链路。Talker 侧采用 MTP（Multi-Token Prediction）一次预测多层 Mimi codes，再配合 VAD 支持实时打断与近似双工交互，这是足够实用的工程路线之一。本项目的代码、模型权重、训练数据和技术报告全部完整开源，单张 RTX 3090 上约 2 小时即可跑通 mini 数据集训练。目标依旧：让每个人都能从第一行代码读起，自己动手，从 0 训练一个能听、能看、能思考、能说的模型：
 
-![](images/omni_io_flow.png)
+![](docs/images/omni_io_flow.png)
 
 😊 一起感受创造的乐趣吧！
 
@@ -116,6 +116,8 @@ MiniMind-O 尝试补上已知的空位：让语音和文本在 hidden state 层�
 
 ## 第0步（必须）
 
+> 工程结构、目录说明与迁移说明见 [docs/architecture.md](docs/architecture.md) 和 [docs/migration.md](docs/migration.md)。
+
 ### 1' 环境准备
 
 ```bash
@@ -123,19 +125,21 @@ MiniMind-O 尝试补上已知的空位：让语音和文本在 hidden state 层�
 git clone --depth 1 https://github.com/jingyaogong/minimind-o
 # 安装必要依赖
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+# 以可编辑模式安装 baize_v 包（脚本通过 `from baize_v import ...` 引用）
+pip install -e .
 ```
 
 ### 2' 下载资源
 
 ```bash
-# 下载 SenseVoice-Small 语音编码器到 ./model/SenseVoiceSmall
-modelscope download --model gongjy/SenseVoiceSmall --local_dir ./model/SenseVoiceSmall
-# 下载 SigLIP2 视觉编码器到 ./model/siglip2-base-p32-256-ve
-modelscope download --model gongjy/siglip2-base-p32-256-ve --local_dir ./model/siglip2-base-p32-256-ve
-# 下载 Mimi 音频编解码器到 ./model/mimi
-modelscope download --model gongjy/mimi --local_dir ./model/mimi
-# 下载 CAMPPlus 说话人编码器到 ./model/campplus
-modelscope download --model gongjy/campplus --local_dir ./model/campplus
+# 下载 SenseVoice-Small 语音编码器到 ./pretrained/SenseVoiceSmall
+modelscope download --model gongjy/SenseVoiceSmall --local_dir ./pretrained/SenseVoiceSmall
+# 下载 SigLIP2 视觉编码器到 ./pretrained/siglip2-base-p32-256-ve
+modelscope download --model gongjy/siglip2-base-p32-256-ve --local_dir ./pretrained/siglip2-base-p32-256-ve
+# 下载 Mimi 音频编解码器到 ./pretrained/mimi
+modelscope download --model gongjy/mimi --local_dir ./pretrained/mimi
+# 下载 CAMPPlus 说话人编码器到 ./pretrained/campplus
+modelscope download --model gongjy/campplus --local_dir ./pretrained/campplus
 # 下载 MiniMind 语言模型权重到 ./out 目录下（作为训练 Omni 的基座语言模型）
 modelscope download --model gongjy/minimind-3o-pytorch llm_768.pth --local_dir ./out
 ```
@@ -146,7 +150,7 @@ modelscope download --model gongjy/minimind-3o-pytorch llm_768.pth --local_dir .
 
 ```text
 minimind-o/
-├── model/
+├── pretrained/
 │   ├── SenseVoiceSmall/
 │   ├── siglip2-base-p32-256-ve/
 │   ├── mimi/
@@ -169,25 +173,24 @@ modelscope download --model gongjy/minimind-3o-pytorch --local_dir ./out
 ### 2' 命令行问答
 
 ```bash
-python eval_omni.py --load_from model --weight sft_omni
+python scripts/evaluate.py --load_from torch --weight sft_omni
 ```
 
 如果使用 transformers 格式模型，可先下载模型目录：
 
 ```bash
-git clone https://huggingface.co/jingyaogong/minimind-3o
-python eval_omni.py --load_from minimind-3o
+git clone https://huggingface.co/jingyaogong/minimind-3o out/minimind-3o
+python scripts/evaluate.py --load_from out/minimind-3o
 ```
 
 ### 3' 启动 WebUI（可选）
 
 ```bash
-# ⚠️ 须先将 transformers 格式模型文件夹复制到 ./scripts/ 目录下，web_demo_omni 脚本会自动扫描该目录下包含权重文件的子文件夹，如不存在则报错
-cp -r minimind-3o ./scripts/minimind-3o
-cd scripts && python web_demo_omni.py
+# 先把 transformers 格式模型放到 ./out/ 下（如 ./out/minimind-3o），服务会自动扫描该目录
+python apps/web/server.py --load_from out
 ```
 
-注：`scripts/web_demo_omni.py` 是 Gradio 非实时演示，上传/录音音频会在后端按实际采样率重采样到 16k；实时语音通话请使用 `webui/web_demo.py`。
+注：`examples/gradio_demo.py` 是 Gradio 非实时演示（上传/录音音频在后端按实际采样率重采样到 16k），用法相同：`python examples/gradio_demo.py --load_from out`。实时语音通话请使用 `apps/web/server.py`。
 
 ## Ⅱ 🛠️ 模型训练
 
@@ -209,12 +212,12 @@ print(torch.cuda.is_available())
 
 ### 2' 开始训练
 
-推荐 mini 训练管线如下，默认在 `trainer/` 目录下执行，可直接 `cd trainer && bash train.sh`：
+推荐 mini 训练管线如下，默认在仓库根目录执行，也可直接 `bash scripts/recipes/mini.sh`：
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 train_sft_omni.py --learning_rate 5e-4 --data_path ../dataset/sft_t2a_mini.parquet --epochs 1 --batch_size 40 --use_compile 1 --from_weight llm --save_weight sft_zero --max_seq_len 512 --use_wandb --use_moe 0
-CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 train_sft_omni.py --learning_rate 5e-4 --data_path ../dataset/sft_a2a_mini.parquet --epochs 1 --batch_size 40 --use_compile 0 --from_weight sft_zero --save_weight sft_zero --max_seq_len 640 --mode audio_proj --use_wandb --use_moe 0
-CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 train_sft_omni.py --learning_rate 2e-5 --data_path ../dataset/sft_a2a_mini.parquet --epochs 1 --batch_size 16 --use_compile 0 --from_weight sft_zero --save_weight sft_zero --max_seq_len 768 --use_wandb --use_moe 0
+CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 scripts/train_sft.py --learning_rate 5e-4 --data_path dataset/sft_t2a_mini.parquet --epochs 1 --batch_size 40 --use_compile 1 --from_weight llm --save_weight sft_zero --max_seq_len 512 --use_wandb --use_moe 0
+CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 scripts/train_sft.py --learning_rate 5e-4 --data_path dataset/sft_a2a_mini.parquet --epochs 1 --batch_size 40 --use_compile 0 --from_weight sft_zero --save_weight sft_zero --max_seq_len 640 --mode audio_proj --use_wandb --use_moe 0
+CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 scripts/train_sft.py --learning_rate 2e-5 --data_path dataset/sft_a2a_mini.parquet --epochs 1 --batch_size 16 --use_compile 0 --from_weight sft_zero --save_weight sft_zero --max_seq_len 768 --use_wandb --use_moe 0
 ```
 
 ### 3' 测试已训练模型（可选）
@@ -222,7 +225,7 @@ CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 train_sft
 确保需要测试的模型 `*.pth` 文件已保存于 `./out/` 目录下。
 
 ```bash
-python eval_omni.py --weight sft_omni
+python scripts/evaluate.py --weight sft_omni
 ```
 
 # 📌 模型细节
@@ -231,13 +234,13 @@ MiniMind-O 的基座语言模型来自孪生项目 [MiniMind](https://github.com
 
 ## Ⅰ 架构总览
 
-![](./images/architecture.jpg)
+![](./docs/images/architecture.jpg)
 
 MiniMind-O 的主体由 Thinker 和 Talker 两条路径组成。Thinker 负责理解文本、语音和图像输入，并生成语义层面的文本回复；Talker 则在 Thinker 给出的语义条件上，通过 MTP 同步预测多层 Mimi audio codes，最后由音频解码器还原成流式语音。这样做的目的不是把 ASR、LLM、TTS 简单串起来，而是在一个统一序列里同时保留文本推理、语音输出和流式交互能力。
 
 文本输入直接进入语言主干；语音和图像分别经过 Audio Encoder 与 Vision Encoder 提取特征，再映射到 MiniMind 的隐空间中。音色信息由 Speaker Encoder 或参考音频 codes 提供，推理时可以配合 VAD 实现边听边答、实时打断和近似双工交互。更细的 projector 结构、序列排布和训练目标在后文展开，代码层面的实现细节可直接参考 `model/model_omni.py` 与[技术报告](http://arxiv.org/abs/2605.03937)。
 
-![](./images/input_token_layout.jpg)
+![](./docs/images/input_token_layout.jpg)
 
 图中展示了文本 token、语音特征、图像特征和音色条件在输入序列中的布局方式。
 
@@ -255,7 +258,7 @@ Talker 负责把 Thinker 给出的语义状态转成 8 层 Mimi codebook 序列�
 
 ## Ⅴ 序列格式与流式解码
 
-![](./images/sequence_format.jpg)
+![](./docs/images/sequence_format.jpg)
 
 MiniMind-O 将文本 token 与 8 路 audio-code stream 放在同一个训练样本中：Thinker 负责文本序列，Talker 负责音频 code 序列，语音、图像和音色条件都通过占位符或 reference codes 注入。回复开始之后才计算目标文本和目标音频的损失，因此 reference 与 conditioning 区域只提供条件，不作为重构目标。
 
@@ -298,7 +301,7 @@ MiniMind-O 所说的 0.1B，指 Thinker、Talker 和两路 projector 组成的�
 
 所有语音数据都统一转成 Mimi codes 存储，8 层 codebook，帧率 12.5 Hz；图像统一 resize 到 256×256，由 SigLIP2 P32 编码为 64 个 patch token。训练数据主要来自公开 omni / speech instruction 数据，包括 [VoiceAssistant-400K](https://huggingface.co/datasets/gpt-omni/VoiceAssistant-400K)、[UltraChat-300K-SLAM-Omni](https://huggingface.co/datasets/worstchan/UltraChat-300K-SLAM-Omni) 等；同时基于 Qwen3-TTS 进行了大量多说话人音频合成，并用 CAM++ 提取 speaker embedding 作为音色条件。I2T 数据与 [MiniMind-V](https://github.com/jingyaogong/minimind-v) 使用的视觉指令数据来源一致，原始组成和引用可参考该项目说明。
 
-仓库提供 **mini** 与 **full** 两套训练数据。mini 从 full 中按"英文 + 无视觉"筛出，配 `train_sft_omni.py` 的默认 `--data_path` 即可使用；它的目标是用较低成本跑通 Thinker–Talker、Mimi 编解码、序列布局和音色注入链路，而不是复现发布模型的中文语音能力。中文 Talker 要同时处理更复杂的字音映射、韵律停顿和多说话人稳定性，明显比英文更难，不能依赖单卡 3090 约 2 小时的 mini 训练完成。
+仓库提供 **mini** 与 **full** 两套训练数据。mini 从 full 中按"英文 + 无视觉"筛出，配 `scripts/train_sft.py` 的默认 `--data_path` 即可使用；它的目标是用较低成本跑通 Thinker–Talker、Mimi 编解码、序列布局和音色注入链路，而不是复现发布模型的中文语音能力。中文 Talker 要同时处理更复杂的字音映射、韵律停顿和多说话人稳定性，明显比英文更难，不能依赖单卡 3090 约 2 小时的 mini 训练完成。
 
 full 数据集与发布的 `minimind-3o` / `minimind-3o-moe` 权重对应，覆盖中英文 T2A / A2A 与图像 I2T。规模与中英文比例见下表，是论文中 CER / 音色相似度等指标的实际训练源。
 
@@ -316,9 +319,9 @@ full 数据集与发布的 `minimind-3o` / `minimind-3o-moe` 权重对应，覆�
 
 ## Ⅱ 训练
 
-训练入口是 `train_sft_omni.py`，推荐流程可直接参考 `trainer/train.sh`。当前 full 训练不拆复杂的多阶段预训练，而是按数据流逐步接入能力：
+训练入口是 `scripts/train_sft.py`，推荐流程可直接参考 `scripts/recipes/`。当前 full 训练不拆复杂的多阶段预训练，而是按数据流逐步接入能力：
 
-![](./images/training_pipeline.jpg)
+![](./docs/images/training_pipeline.jpg)
 
 - `sft_t2a`：先对齐文本到语音输出，让 Talker 学会在 Thinker 语义条件下生成 Mimi codes；
 - `sft_a2a`：再接入语音输入，使模型从 speech instruction 进入同一套 Thinker–Talker 回复链路；
@@ -328,11 +331,11 @@ full 数据集与发布的 `minimind-3o` / `minimind-3o-moe` 权重对应，覆�
 
 下面给出 full 训练过程中的 T2A 与 A2A loss 曲线（仅供参考）：
 
-![](./images/t2a_training_curves.jpg)
+![](./docs/images/t2a_training_curves.jpg)
 
 > `sft_t2a`：文本到语音输出链路
 
-![](./images/a2a_training_curves.jpg)
+![](./docs/images/a2a_training_curves.jpg)
 
 > `sft_a2a`：接入语音输入后的 loss
 
@@ -345,7 +348,7 @@ T2A 曲线已去掉早期不兼容权重 resume 造成的异常尖峰；MoE 总�
 | PyTorch (`*.pth`) | [minimind-3o-pytorch](https://www.modelscope.cn/models/gongjy/minimind-3o-pytorch) | [minimind-3o-pytorch](https://huggingface.co/jingyaogong/minimind-3o-pytorch) |
 | Transformers | [minimind-o collection](https://modelscope.cn/collections/gongjy/MiniMind-O) | [minimind-o collection](https://huggingface.co/collections/jingyaogong/minimind-o) |
 
-> Transformers 版本包含 `minimind-3o` 与 `minimind-3o-moe`，适合直接用于 `eval_omni.py` 和 WebUI 推理；原生 PyTorch 权重主要用于训练、复现实验和继续微调。
+> Transformers 版本包含 `minimind-3o` 与 `minimind-3o-moe`，适合直接用于 `scripts/evaluate.py` 和 WebUI 推理；原生 PyTorch 权重主要用于训练、复现实验和继续微调。
 
 # 📌 评估
 
@@ -553,7 +556,7 @@ https://github.com/user-attachments/assets/3f533e26-1ad8-4ab3-baf1-21267734d3ee
 
 ## Ⅴ 样例
 
-![](./images/qual_a2a.jpg)
+![](./docs/images/qual_a2a.jpg)
 
 语音到语音样例直接以真实语音作为输入，由 Thinker 组织语义，再由 Talker 渲染成语音。短回答仍然是当前更稳的区间，中文解释型问题通常能生成较连贯的回答，英文的发音和节奏相对更稳定。
 
@@ -572,7 +575,7 @@ https://github.com/user-attachments/assets/354a5eec-c147-4d18-8c7a-942bd2a0b4b0
 </tr>
 </table>
 
-![](./images/image2audio_qualitative.jpg)
+![](./docs/images/image2audio_qualitative.jpg)
 
 图像问答样例把视觉编码、文本生成和语音渲染串在同一条链路里。当前模型通常能抓住主体物体和大致场景，但细粒度空间关系、数量和属性仍容易出错，因此更适合作为小模型 omni pipeline 的可复现基线。
 
@@ -593,7 +596,7 @@ https://github.com/user-attachments/assets/3e8d0a76-282d-4a9d-9726-a954cf80198a
 
 ## Ⅵ 实时交互
 
-![](./images/realtime_interaction.jpg)
+![](./docs/images/realtime_interaction.jpg)
 
 最后是实时交互界面。用户停止说话后，Thinker 先完成语义侧的 prefill，Talker 随后开始逐步产生音频 code，Mimi decoder 则边接收 code 边写出 24 kHz 波形。Barge-in 的例子展示了另一条更接近真实对话的路径：当用户在模型说话过程中再次开口，系统会中断当前生成，重新进入 prefill–reply 流程。这里的中断检测仍然只是简单 VAD 阈值，还谈不上语义级打断；但从工程闭环看，系统已经能从 speaking 状态退回 listening 状态，并处理下一轮输入。
 

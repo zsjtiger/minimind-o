@@ -1,136 +1,38 @@
+"""MiniMind-O SFT 训练入口。
+
+用法（仓库根目录，已 ``pip install -e .``）::
+
+    python scripts/train_sft.py --data_path dataset/sft_a2a_mini.parquet --from_weight llm
+
+完整配方见 docs/training.md 与 scripts/recipes/。
+"""
 import os
-import sys
-
-__package__ = "trainer"
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-import datasets
 import argparse
-import time
 import warnings
-import torch
-import torch.nn as nn
-import torch.distributed as dist
+from types import SimpleNamespace
 from contextlib import nullcontext
+
+import torch
+import torch.distributed as dist
 from torch import optim
-from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
-from model.model_omni import OmniConfig
-from dataset.omni_dataset import OmniDataset
-from trainer.trainer_utils import get_lr, Logger, is_main_process, init_distributed_mode, setup_seed, init_omni_model, omni_checkpoint, SkipBatchSampler, log_model_params
+from torch.nn.parallel import DistributedDataParallel
+
+from baize_v.config import OmniConfig
+from baize_v.data import OmniDataset, omni_collate_fn
+from baize_v.train.loop import train_epoch
+from baize_v.train.dist import is_main_process, init_distributed_mode, setup_seed, Logger
+from baize_v.train.init import init_omni_model, log_model_params
+from baize_v.train.checkpoint import omni_checkpoint
+from baize_v.train.schedule import SkipBatchSampler
+from baize_v.paths import OUT_DIR, CHECKPOINT_DIR, DATA_DIR, SENSEVOICE_DIR, SIGLIP_DIR
 
 warnings.filterwarnings('ignore')
 
 
-def omni_collate_fn(batch):
-    """自定义collate函数，处理变长audio_inputs和pixel_values"""
-    input_ids, labels, audio_labels, audio_inputs, audio_lens, pixel_values, spk_emb = zip(*batch)
-    input_ids = torch.stack(input_ids)
-    labels = torch.stack(labels)
-    audio_labels = torch.stack(audio_labels)
-    audio_lens = torch.tensor(audio_lens, dtype=torch.long)
-    valid_audios = [a for a in audio_inputs if a is not None]
-    if valid_audios:
-        max_t = max(a.size(1) for a in valid_audios)
-        padded = [a if a.size(1) == max_t else torch.nn.functional.pad(a, (0, 0, 0, max_t - a.size(1))) for a in valid_audios]
-        audio_inputs = torch.cat(padded, dim=0)
-    else:
-        audio_inputs = None
-    valid_images = [p for p in pixel_values if p is not None]
-    if valid_images:
-        if hasattr(valid_images[0], 'keys'):
-            keys = set.intersection(*[set(d.keys()) for d in valid_images])
-            pixel_values = {k: torch.cat([d[k] for d in valid_images], dim=0) for k in keys}
-        else:
-            pixel_values = torch.cat(valid_images, dim=0)
-    else:
-        pixel_values = None
-    spk_emb = torch.stack(spk_emb)
-    return input_ids, labels, audio_labels, audio_inputs, audio_lens, pixel_values, spk_emb
-
-
-def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
-    start_time = time.time()
-    for step, (input_ids, labels, audio_labels, audio_inputs, audio_lens, pixel_values, spk_emb) in enumerate(loader, start=start_step + 1):
-        input_ids = input_ids.to(args.device)
-        labels = labels.to(args.device)
-        audio_labels = audio_labels.to(args.device)
-        audio_lens = audio_lens.to(args.device)
-        if audio_inputs is not None:
-            audio_inputs = audio_inputs.to(args.device)
-        if pixel_values is not None:
-            if hasattr(pixel_values, 'keys'):
-                pixel_values = {k: v.to(args.device) for k, v in pixel_values.items()}
-            else:
-                pixel_values = pixel_values.to(args.device)
-        spk_emb = spk_emb.to(args.device)
-        lr = get_lr(epoch * iters + step, args.epochs * iters, args.learning_rate)
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr
-
-        with autocast_ctx:
-            res = model(input_ids, audio_inputs=audio_inputs, audio_lens=audio_lens, pixel_values=pixel_values, spk_emb=spk_emb)
-            loss_fct = nn.CrossEntropyLoss(reduction='none')
-            
-            # Text loss
-            text_loss_raw = loss_fct(res.logits.view(-1, res.logits.size(-1)), labels.view(-1))
-            text_mask = (labels.view(-1) != -100).float()
-            text_loss = (text_loss_raw * text_mask).sum() / (text_mask.sum() + 1e-9)
-            
-            # Audio loss
-            audio_loss = res.audio_logits[0].sum() * 0
-            for i, al in enumerate(res.audio_logits):
-                al_flat = al.view(-1, al.size(-1))
-                target_flat = audio_labels[:, i, :].reshape(-1)
-                layer_loss = loss_fct(al_flat, target_flat)
-                valid_mask = (target_flat != -100).float()
-                stop_mask = (target_flat == 2050).float()
-                weighted_loss = layer_loss * valid_mask * (1 + stop_mask * 9)
-                msum = valid_mask.sum()
-                if msum > 0:
-                    audio_loss = audio_loss + weighted_loss.sum() / (msum + 1e-9)
-            audio_loss = audio_loss / 8 
-            
-            loss = (text_loss + audio_loss + res.aux_loss) / args.accumulation_steps
-
-        scaler.scale(loss).backward()
-        if step % args.accumulation_steps == 0 or step == iters:
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad(set_to_none=True)
-
-        if step % args.log_interval == 0 or step == iters:
-            spend_time = time.time() - start_time
-            current_loss = loss.item() * args.accumulation_steps
-            text_loss_val = text_loss.item() if isinstance(text_loss, torch.Tensor) else 0
-            audio_loss_val = audio_loss.item() if isinstance(audio_loss, torch.Tensor) else 0
-            current_lr = optimizer.param_groups[-1]['lr']
-            eta_min = spend_time / max(step - start_step, 1) * (iters - step) // 60
-            Logger(f'Epoch:[{epoch+1}/{args.epochs}]({step}/{iters}), loss: {current_loss:.4f}, text: {text_loss_val:.4f}, audio: {audio_loss_val:.4f}, lr: {current_lr:.8f}, epoch_time: {eta_min:.1f}min')
-            if wandb: 
-                wandb.log({"loss": current_loss, "text_loss": text_loss_val, 
-                          "audio_loss": audio_loss_val, "lr": current_lr, "epoch_time": eta_min})
-
-        if (step % args.save_interval == 0 or step == iters) and is_main_process():
-            model.eval()
-            moe_suffix = '_moe' if omni_config.use_moe else ''
-            ckp = f'{args.save_dir}/{args.save_weight}_{omni_config.hidden_size}{moe_suffix}.pth'
-            raw_model = model.module if isinstance(model, DistributedDataParallel) else model
-            raw_model = getattr(raw_model, '_orig_mod', raw_model)
-            clean_state_dict = {k: v for k, v in raw_model.state_dict().items() if not k.startswith('audio_encoder.')}
-            torch.save({k: v.half().cpu() for k, v in clean_state_dict.items()}, ckp)
-            omni_checkpoint(omni_config, weight=args.save_weight, model=model, optimizer=optimizer, 
-                          epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints', scaler=scaler)
-            model.train()
-
-        del input_ids, labels, audio_labels, audio_inputs, audio_lens, pixel_values, spk_emb, res, loss
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MiniMind-O SFT")
-    parser.add_argument("--save_dir", type=str, default="../out", help="模型保存目录")
+    parser.add_argument("--save_dir", type=str, default=OUT_DIR, help="模型保存目录")
     parser.add_argument('--save_weight', default='sft_omni', type=str, help="保存权重的前缀名")
     parser.add_argument("--epochs", type=int, default=15, help="训练轮数")
     parser.add_argument("--batch_size", type=int, default=32, help="batch size")
@@ -146,9 +48,9 @@ if __name__ == "__main__":
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
     parser.add_argument('--max_seq_len', default=512, type=int, help="训练的最大截断长度")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构")
-    parser.add_argument("--data_path", type=str, default="../dataset/train_t2a_mini.parquet", help="训练数据路径（parquet格式）")
-    parser.add_argument("--audio_encoder_dir", type=str, default="../model/SenseVoiceSmall", help="音频encoder路径(SenseVoice)")
-    parser.add_argument("--vision_dir", type=str, default="../model/siglip2-base-p32-256-ve", help="CLIP视觉模型路径")
+    parser.add_argument("--data_path", type=str, default=os.path.join(DATA_DIR, "train_t2a_mini.parquet"), help="训练数据路径（parquet格式）")
+    parser.add_argument("--audio_encoder_dir", type=str, default=SENSEVOICE_DIR, help="音频encoder路径(SenseVoice)")
+    parser.add_argument("--vision_dir", type=str, default=SIGLIP_DIR, help="CLIP视觉模型路径")
     parser.add_argument('--from_weight', default='llm', type=str, help="基于哪个权重训练，为none则不基于任何权重训练")
     parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
     parser.add_argument('--freeze_backbone', default='none', type=str, choices=['none', 'all', 'last1'], help="冻结主干模型: none=全量训练, all=只训练audio层, last1=只训练最后1层+audio层")
@@ -171,7 +73,7 @@ if __name__ == "__main__":
         num_hidden_layers=args.num_hidden_layers, 
         use_moe=bool(args.use_moe)
     )
-    ckp_data = omni_checkpoint(omni_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
+    ckp_data = omni_checkpoint(omni_config, weight=args.save_weight, save_dir=CHECKPOINT_DIR) if args.from_resume==1 else None
     
     # ========== 3. 设置混合精度 ==========
     device_type = "cuda" if "cuda" in args.device else "cpu"
@@ -238,6 +140,7 @@ if __name__ == "__main__":
         model = DistributedDataParallel(model, device_ids=[local_rank])
     
     # ========== 8. 开始训练 ==========
+    ctx = SimpleNamespace(args=args, model=model, optimizer=optimizer, scaler=scaler, autocast_ctx=autocast_ctx, omni_config=omni_config)
     for epoch in range(start_epoch, args.epochs):
         train_sampler and train_sampler.set_epoch(epoch)
         setup_seed(42 + epoch); indices = torch.randperm(len(train_ds)).tolist()
@@ -246,9 +149,9 @@ if __name__ == "__main__":
         loader = DataLoader(train_ds, batch_sampler=batch_sampler, collate_fn=omni_collate_fn, num_workers=args.num_workers, pin_memory=True)
         if skip > 0:
             Logger(f'Epoch [{epoch + 1}/{args.epochs}]: 跳过前{start_step}个step，从step {start_step + 1}开始')
-            train_epoch(epoch, loader, len(loader) + skip, start_step, wandb)
+            train_epoch(ctx, epoch, loader, len(loader) + skip, start_step, wandb)
         else:
-            train_epoch(epoch, loader, len(loader), 0, wandb)
+            train_epoch(ctx, epoch, loader, len(loader), 0, wandb)
     
     # ========== 9. 清理分布进程 ==========
     if dist.is_initialized(): dist.destroy_process_group()

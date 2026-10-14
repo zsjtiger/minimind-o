@@ -1,8 +1,25 @@
 __pycache__/
 *.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
 .DS_Store
 .vscode/
 .cursor/
 .claude/
 .specstory/
 .env
+
+# 训练 / 推理产物与外部权重（不入库）
+out/
+checkpoints/
+pretrained/
+dataset/
+output_audio/
+minimind-3o/
+*.pth
+*.pt.tmp
+*.wav
+*.parquet

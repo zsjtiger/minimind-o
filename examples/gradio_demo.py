@@ -1,10 +1,10 @@
+"""Gradio 版 Demo（示例）。主推的 Web 应用见 apps/web/server.py。
+
+用法（仓库根目录，已 pip install -e .）：python examples/gradio_demo.py
+"""
 import os
 import sys
-
-__package__ = "scripts"
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import argparse
-import base64
 import io
 import tempfile
 import warnings
@@ -15,14 +15,12 @@ import soundfile as sf
 import numpy as np
 import torch
 import gradio as gr
-from queue import Queue
 from threading import Thread, Lock
 from PIL import Image
-from pydub import AudioSegment
-from transformers import AutoTokenizer, AutoModelForCausalLM, MimiModel, TextStreamer
-from model.model_omni import MiniMindOmni, OmniConfig
-from dataset.omni_dataset import OmniDataset
-from trainer.trainer_utils import setup_seed, log_model_params
+from transformers import AutoTokenizer, AutoModelForCausalLM, MimiModel
+from baize_v.models import MiniMindOmni
+from baize_v.inference.loader import scan_hf_models
+from baize_v.paths import SENSEVOICE_DIR, SIGLIP_DIR, MIMI_DIR, SPEAKER_DIR
 logging.getLogger().setLevel(logging.ERROR)
 with contextlib.redirect_stdout(io.StringIO()):
     from funasr import AutoModel
@@ -87,18 +85,6 @@ def decode_mimi(mimi_codes):
     return audio.squeeze().float().cpu().numpy()
 
 
-def scan_hf_models(base_dir):
-    models = {}
-    base_dir = os.path.abspath(base_dir)
-    for d in sorted(os.listdir(base_dir), reverse=True):
-        full_path = os.path.join(base_dir, d)
-        if not os.path.isdir(full_path) or d.startswith('.') or d.startswith('_'):
-            continue
-        files = set(os.listdir(full_path))
-        has_model = bool(files & {'pytorch_model.bin', 'model.safetensors', 'pytorch_model.bin.index.json', 'model.safetensors.index.json'})
-        if has_model:
-            models[d] = full_path
-    return models
 
 
 def load_hf_model(model_path):
@@ -129,7 +115,7 @@ def load_voices():
     voices_data = {}
     builtin_voices, clone_voices = set(), set()
     for name, is_builtin in [('voices.pt', True), ('voices_unseen.pt', False)]:
-        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'model', 'speaker', name)
+        path = os.path.join(SPEAKER_DIR, name)
         if os.path.exists(path):
             data = torch.load(path, map_location=device)
             for speaker, v in data.items():
@@ -292,9 +278,9 @@ def launch_gradio(server_name="0.0.0.0", server_port=8888):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="MiniMind-O Gradio Demo")
     parser.add_argument('--load_from', default='./', type=str, help="transformers模型扫描目录")
-    parser.add_argument('--audio_encoder', default='../model/SenseVoiceSmall', type=str)
-    parser.add_argument('--vision_model', default='../model/siglip2-base-p32-256-ve', type=str)
-    parser.add_argument('--mimi_path', default='../model/mimi', type=str)
+    parser.add_argument('--audio_encoder', default=SENSEVOICE_DIR, type=str)
+    parser.add_argument('--vision_model', default=SIGLIP_DIR, type=str)
+    parser.add_argument('--mimi_path', default=MIMI_DIR, type=str)
     parser.add_argument('--device', default=default_device(), type=str)
     parser.add_argument('--asr_device', default='auto', type=str, help='ASR设备；auto 在 MPS 主设备下使用 cpu，其它情况跟随 --device')
     parser.add_argument('--mimi_device', default='auto', type=str, help='Mimi 解码设备；auto 跟随 --device')

@@ -1,44 +1,22 @@
-import torch
 import os
-import math
+import io
+import json
 import random
+
+import torch
 import numpy as np
 import soundfile as sf
 import librosa
-import json
-import io
 from PIL import Image
-from scipy.signal import resample
-from torch.utils.data import Dataset
 import pyarrow as pa
 import pyarrow.parquet as pq
+from torch.utils.data import Dataset
+
+from .chat import pre_processing_chat, post_processing_chat
+from .augment import augment_wav, augment_mel
+from .labels import generate_text_labels, apply_scheduled_sampling
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-def pre_processing_chat(conversations, add_system_ratio=0.2):
-    if any(conv.get('tools') for conv in conversations): return conversations
-
-    SYSTEM_PROMPTS = [
-        "你是一个知识丰富的AI，尽力为用户提供准确的信息。",
-        "你是minimind，一个小巧但有用的语言模型。",
-        "你是一个专业的AI助手，请提供有价值的回答。",
-        "你是minimind，请尽力帮助用户解决问题。",
-        "你是一个可靠的AI，请给出准确的回答。",
-        "You are a helpful AI assistant.",
-        "You are minimind, a lightweight intelligent assistant.",
-        "You are a friendly chatbot. Please answer the user's questions carefully.",
-        "You are a knowledgeable AI. Try your best to provide accurate information.",
-        "You are minimind, a small but useful language model."
-    ]
-    if conversations[0].get('role') != 'system':
-        if random.random() < add_system_ratio:
-            return [{'role': 'system', 'content': random.choice(SYSTEM_PROMPTS)}] + conversations
-    return conversations
-
-def post_processing_chat(prompt_content, empty_think_ratio=0.2):
-    if '<think>\n\n</think>\n\n' in prompt_content and random.random() > empty_think_ratio:
-        prompt_content = prompt_content.replace('<think>\n\n</think>\n\n', '')
-    return prompt_content
 
 
 class OmniDataset(Dataset):
@@ -86,64 +64,15 @@ class OmniDataset(Dataset):
         valid_len = inputs.attention_mask.sum().item()
         return inputs.input_features.squeeze(0), valid_len
 
-    def augment_wav(self, wav, sr=16000):
-        # 随机变速(0.7~1.6x)：改变音频时长和音调，覆盖快/慢语速
-        if random.random() < 0.5:
-            speed = random.uniform(0.7, 1.6)
-            wav = resample(wav, int(len(wav) / speed)).astype(np.float32)
-        # 随机加噪：叠加轻微高斯白噪声，模拟录音环境差异
-        if random.random() < 0.3:
-            noise = np.random.randn(len(wav)).astype(np.float32) * random.uniform(0.001, 0.01)
-            wav = wav + noise
-        # 随机音量：缩放振幅0.8~1.2倍，模拟说话音量变化
-        if random.random() < 0.3:
-            wav = wav * random.uniform(0.8, 1.2)
-        # 随机时间遮蔽：将0.25秒片段置零，模拟短暂静音/丢包
-        if random.random() < 0.2 and len(wav) > sr:
-            start = random.randint(0, len(wav) - sr // 4)
-            wav[start:start + sr // 4] = 0
-        # 随机低通滤波：移动平均模糊高频，模拟电话/低质量麦克风
-        if random.random() < 0.2:
-            k = random.choice([3, 5, 7])
-            wav = np.convolve(wav, np.ones(k) / k, mode='same').astype(np.float32)
-        # 随机混响：合成指数衰减脉冲响应卷积，模拟房间反射/回声
-        if random.random() < 0.3:
-            ir_len = int(sr * random.uniform(0.05, 0.2))
-            ir = np.random.randn(ir_len).astype(np.float32) * np.exp(-np.linspace(0, 10, ir_len))
-            ir[0] = 1.0
-            ir /= np.sqrt(np.sum(ir ** 2) + 1e-6)
-            wav = np.convolve(wav, ir, mode='same').astype(np.float32)
-        # 随机粉红噪声：1/f噪声模拟房间环境底噪（空调/远处人声）
-        if random.random() < 0.2:
-            pink = np.cumsum(np.random.randn(len(wav))).astype(np.float32)
-            pink /= np.max(np.abs(pink)) + 1e-6
-            wav = wav + pink * random.uniform(0.003, 0.015)
-        return np.clip(wav, -1.0, 1.0).astype(np.float32)
-
-    def augment_mel(self, fbank):
-        # fbank: (T, 560) — SenseVoice LFR 后的特征（时间维在前，频率维在后）
-        T, D = fbank.shape
-        # SpecAugment频率遮蔽：随机抹掉1~64维，防止对特定频段过拟合
-        if random.random() < 0.5:
-            f = random.randint(1, 64)
-            f0 = random.randint(0, D - f)
-            fbank[:, f0:f0 + f] = 0
-        # SpecAugment时间遮蔽：随机抹掉1~min(10,T)帧，提升对不完整输入的容错
-        if random.random() < 0.5 and T > 1:
-            t = random.randint(1, min(10, T))
-            t0 = random.randint(0, T - t)
-            fbank[t0:t0 + t, :] = 0
-        return fbank
-
     def load_audio_inputs(self, audio_bytes):
         if not audio_bytes: return None, 0
         wav, sr = sf.read(io.BytesIO(audio_bytes))
         if wav.ndim > 1: wav = wav.mean(axis=1)
         if sr != 16000: wav = librosa.resample(wav.astype(float), orig_sr=sr, target_sr=16000)
-        wav = self.augment_wav(wav.astype(np.float32))
+        wav = augment_wav(wav.astype(np.float32))
         inputs = self.audio_processor(wav, sampling_rate=16000, return_tensors="pt", return_attention_mask=True)
         valid_len = inputs.attention_mask.sum().item()
-        return self.augment_mel(inputs.input_features.squeeze(0)), valid_len
+        return augment_mel(inputs.input_features.squeeze(0)), valid_len
 
     def load_image_inputs(self, image_bytes):
         if not image_bytes or self.vision_processor is None: return None
@@ -176,38 +105,6 @@ class OmniDataset(Dataset):
         return post_processing_chat(prompt)
 
     
-    def generate_text_labels(self, input_ids):
-        labels = [-100] * len(input_ids)
-        ranges = []
-        i = 0
-        while i < len(input_ids):
-            if input_ids[i:i + len(self.bos_id)] == self.bos_id:
-                start = i + len(self.bos_id)
-                end = start
-                while end < len(input_ids):
-                    if input_ids[end:end + len(self.eos_id)] == self.eos_id:
-                        break
-                    end += 1
-                ranges.append((start, end))
-                for j in range(start, min(end + len(self.eos_id), self.max_length)):
-                    labels[j] = input_ids[j]
-                i = end + len(self.eos_id) if end < len(input_ids) else len(input_ids)
-            else:
-                i += 1
-        return labels, ranges
-    
-    def apply_scheduled_sampling(self, input_ids, audio_labels, text_labels):
-        """Scheduled Sampling: 用随机值替代部分GT，让模型学会从错误历史中恢复"""
-        if self.scheduled_sampling_prob <= 0:
-            return input_ids
-        audio_mask = (audio_labels != -100).any(dim=0) & (torch.rand(input_ids.size(1)) < self.scheduled_sampling_prob)
-        for i in range(8):
-            input_ids[i] = torch.where(audio_mask, torch.randint(0, self.audio_vocab_size, input_ids[i].shape), input_ids[i])
-        # 保护 image token 的连续性
-        text_mask = (text_labels != -100) & (input_ids[8] != self.image_token_id) & (torch.rand(input_ids.size(1)) < self.scheduled_sampling_prob)
-        input_ids[8] = torch.where(text_mask, torch.randint(0, self.text_vocab_size, input_ids[8].shape), input_ids[8])
-        return input_ids
-
     def __getitem__(self, index: int):
         conversations = json.loads(self.table['conversations'][index].as_py())
         question_audios = self.table['question_audios'][index].as_py() if 'question_audios' in self.table.column_names else []
@@ -274,7 +171,7 @@ class OmniDataset(Dataset):
         input_ids += [self.tokenizer.pad_token_id] * (self.max_length - len(input_ids))
         
         # 生成labels（只训练最后一个assistant）
-        text_labels, assistant_ranges = self.generate_text_labels(input_ids)
+        text_labels, assistant_ranges = generate_text_labels(input_ids, self.bos_id, self.eos_id, self.max_length)
         for start, end in assistant_ranges[:-1]:
             mask_end = min(end + len(self.eos_id), self.max_length)
             text_labels[start:mask_end] = [-100] * (mask_end - start)
@@ -324,22 +221,10 @@ class OmniDataset(Dataset):
         text_labels = torch.tensor(text_labels[1:], dtype=torch.long)  # (T-1,)
         audio_labels = torch.tensor([layer[1:] for layer in audio_labels], dtype=torch.long)  # (8, T-1)
         
-        input_ids = self.apply_scheduled_sampling(input_ids, audio_labels, text_labels)
+        input_ids = apply_scheduled_sampling(input_ids, audio_labels, text_labels, self.scheduled_sampling_prob,
+                                 self.audio_vocab_size, self.text_vocab_size, self.image_token_id)
         spk_emb = torch.tensor(spk_emb_raw, dtype=torch.float32) if spk_emb_raw else torch.zeros(192)
         return input_ids, text_labels, audio_labels, audio_inputs, audio_len, pixel_values, spk_emb
 
 
 # 测试parquet数据读取
-if __name__ == '__main__':
-    for path in ['sft_a2a.parquet']:
-        if not os.path.exists(path): continue
-        t = pa.Table.from_batches(pq.ParquetFile(path).iter_batches())
-        conversations = json.loads(t['conversations'][0].as_py())
-        answer_audios = t['answer_audios'][0].as_py() if 'answer_audios' in t.column_names else []
-        user_msg = conversations[0]
-        asst_msg = conversations[1] if len(conversations) > 1 else {}
-        print(f'{path}: {len(t)}条, 列{t.column_names}')
-        print(f'  User: {user_msg["content"][:50]}...')
-        print(f'  Asst: {asst_msg.get("content", "")[:50]}...')
-        if answer_audios:
-            print(f'  answer_audios: {len(answer_audios)}轮, 首轮{len(answer_audios[0])}tokens')

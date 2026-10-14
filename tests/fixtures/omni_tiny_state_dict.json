@@ -1,0 +1,352 @@
+{
+"audio_proj.mlp.0.bias": [
+512
+],
+"audio_proj.mlp.0.weight": [
+512
+],
+"audio_proj.mlp.1.bias": [
+64
+],
+"audio_proj.mlp.1.weight": [
+64,
+512
+],
+"audio_proj.mlp.3.bias": [
+64
+],
+"audio_proj.mlp.3.weight": [
+64,
+64
+],
+"lm_head.weight": [
+6400,
+64
+],
+"model.embed_tokens.weight": [
+6400,
+64
+],
+"model.layers.0.input_layernorm.weight": [
+64
+],
+"model.layers.0.mlp.down_proj.weight": [
+64,
+256
+],
+"model.layers.0.mlp.gate_proj.weight": [
+256,
+64
+],
+"model.layers.0.mlp.up_proj.weight": [
+256,
+64
+],
+"model.layers.0.post_attention_layernorm.weight": [
+64
+],
+"model.layers.0.self_attn.k_norm.weight": [
+16
+],
+"model.layers.0.self_attn.k_proj.weight": [
+32,
+64
+],
+"model.layers.0.self_attn.o_proj.weight": [
+64,
+64
+],
+"model.layers.0.self_attn.q_norm.weight": [
+16
+],
+"model.layers.0.self_attn.q_proj.weight": [
+64,
+64
+],
+"model.layers.0.self_attn.v_proj.weight": [
+32,
+64
+],
+"model.layers.1.input_layernorm.weight": [
+64
+],
+"model.layers.1.mlp.down_proj.weight": [
+64,
+256
+],
+"model.layers.1.mlp.gate_proj.weight": [
+256,
+64
+],
+"model.layers.1.mlp.up_proj.weight": [
+256,
+64
+],
+"model.layers.1.post_attention_layernorm.weight": [
+64
+],
+"model.layers.1.self_attn.k_norm.weight": [
+16
+],
+"model.layers.1.self_attn.k_proj.weight": [
+32,
+64
+],
+"model.layers.1.self_attn.o_proj.weight": [
+64,
+64
+],
+"model.layers.1.self_attn.q_norm.weight": [
+16
+],
+"model.layers.1.self_attn.q_proj.weight": [
+64,
+64
+],
+"model.layers.1.self_attn.v_proj.weight": [
+32,
+64
+],
+"model.norm.weight": [
+64
+],
+"talker.audio_scale": [],
+"talker.codec_proj.0.bias": [
+64
+],
+"talker.codec_proj.0.weight": [
+64,
+64
+],
+"talker.codec_proj.2.bias": [
+64
+],
+"talker.codec_proj.2.weight": [
+64,
+64
+],
+"talker.codec_proj.3.weight": [
+64
+],
+"talker.embed_proj.0.bias": [
+64
+],
+"talker.embed_proj.0.weight": [
+64,
+64
+],
+"talker.embed_proj.2.bias": [
+64
+],
+"talker.embed_proj.2.weight": [
+64,
+64
+],
+"talker.embed_proj.3.weight": [
+64
+],
+"talker.embed_tokens.adapters.0.0.weight": [
+2112,
+256
+],
+"talker.embed_tokens.adapters.0.2.weight": [
+64,
+256
+],
+"talker.embed_tokens.adapters.1.0.weight": [
+2112,
+256
+],
+"talker.embed_tokens.adapters.1.2.weight": [
+64,
+256
+],
+"talker.embed_tokens.adapters.2.0.weight": [
+2112,
+256
+],
+"talker.embed_tokens.adapters.2.2.weight": [
+64,
+256
+],
+"talker.embed_tokens.adapters.3.0.weight": [
+2112,
+256
+],
+"talker.embed_tokens.adapters.3.2.weight": [
+64,
+256
+],
+"talker.embed_tokens.adapters.4.0.weight": [
+2112,
+256
+],
+"talker.embed_tokens.adapters.4.2.weight": [
+64,
+256
+],
+"talker.embed_tokens.adapters.5.0.weight": [
+2112,
+256
+],
+"talker.embed_tokens.adapters.5.2.weight": [
+64,
+256
+],
+"talker.embed_tokens.adapters.6.0.weight": [
+2112,
+256
+],
+"talker.embed_tokens.adapters.6.2.weight": [
+64,
+256
+],
+"talker.embed_tokens.adapters.7.0.weight": [
+2112,
+256
+],
+"talker.embed_tokens.adapters.7.2.weight": [
+64,
+256
+],
+"talker.embed_tokens.base.weight": [
+2112,
+64
+],
+"talker.layers.0.input_layernorm.weight": [
+64
+],
+"talker.layers.0.mlp.down_proj.weight": [
+64,
+256
+],
+"talker.layers.0.mlp.gate_proj.weight": [
+256,
+64
+],
+"talker.layers.0.mlp.up_proj.weight": [
+256,
+64
+],
+"talker.layers.0.post_attention_layernorm.weight": [
+64
+],
+"talker.layers.0.self_attn.k_norm.weight": [
+8
+],
+"talker.layers.0.self_attn.k_proj.weight": [
+32,
+64
+],
+"talker.layers.0.self_attn.o_proj.weight": [
+64,
+64
+],
+"talker.layers.0.self_attn.q_norm.weight": [
+8
+],
+"talker.layers.0.self_attn.q_proj.weight": [
+64,
+64
+],
+"talker.layers.0.self_attn.v_proj.weight": [
+32,
+64
+],
+"talker.lm_head.adapters.0.0.weight": [
+256,
+64
+],
+"talker.lm_head.adapters.0.2.weight": [
+2112,
+256
+],
+"talker.lm_head.adapters.1.0.weight": [
+256,
+64
+],
+"talker.lm_head.adapters.1.2.weight": [
+2112,
+256
+],
+"talker.lm_head.adapters.2.0.weight": [
+256,
+64
+],
+"talker.lm_head.adapters.2.2.weight": [
+2112,
+256
+],
+"talker.lm_head.adapters.3.0.weight": [
+256,
+64
+],
+"talker.lm_head.adapters.3.2.weight": [
+2112,
+256
+],
+"talker.lm_head.adapters.4.0.weight": [
+256,
+64
+],
+"talker.lm_head.adapters.4.2.weight": [
+2112,
+256
+],
+"talker.lm_head.adapters.5.0.weight": [
+256,
+64
+],
+"talker.lm_head.adapters.5.2.weight": [
+2112,
+256
+],
+"talker.lm_head.adapters.6.0.weight": [
+256,
+64
+],
+"talker.lm_head.adapters.6.2.weight": [
+2112,
+256
+],
+"talker.lm_head.adapters.7.0.weight": [
+256,
+64
+],
+"talker.lm_head.adapters.7.2.weight": [
+2112,
+256
+],
+"talker.lm_head.base.weight": [
+2112,
+64
+],
+"talker.norm.weight": [
+64
+],
+"talker.spk_proj.weight": [
+64,
+192
+],
+"talker.text_scale": [],
+"vision_proj.mlp.0.bias": [
+768
+],
+"vision_proj.mlp.0.weight": [
+768
+],
+"vision_proj.mlp.1.bias": [
+64
+],
+"vision_proj.mlp.1.weight": [
+64,
+768
+],
+"vision_proj.mlp.3.bias": [
+64
+],
+"vision_proj.mlp.3.weight": [
+64,
+64
+]
+}
