@@ -303,5 +303,5 @@ class BaizeOmni(BaizeForCausalLM):
                 yield None, audio_frame
 
 
-# 旧名称兼容：BaizeOmni 已更名为 BaizeOmni
-BaizeOmni = BaizeOmni
+# 旧名称兼容：MiniMindOmni 已更名为 BaizeOmni
+MiniMindOmni = BaizeOmni

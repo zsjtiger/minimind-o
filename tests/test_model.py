@@ -39,3 +39,10 @@ def test_missing_encoders_are_none(tiny_model):
     assert tiny_model.audio_encoder is None
     assert tiny_model.vision_encoder is None
     assert tiny_model.thinker is tiny_model.model
+
+
+def test_legacy_names_are_aliases():
+    from baize_v.models import omni
+    from baize_v.models.llm import BaizeModel, MiniMindModel
+    assert omni.MiniMindOmni is omni.BaizeOmni
+    assert MiniMindModel is BaizeModel
