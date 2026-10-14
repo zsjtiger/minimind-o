@@ -48,14 +48,14 @@ uv run python examples/gradio_demo.py --load_from out
 
 ```python
 import torch
-from baize_v.models import MiniMindOmni
+from baize_v.models import BaizeOmni
 from baize_v.config import OmniConfig
 from baize_v.paths import TOKENIZER_DIR, SENSEVOICE_DIR, SIGLIP_DIR
 from transformers import AutoTokenizer
 
 tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_DIR)
 # 编码器目录不存在时会给出警告并跳过加载，适合只做文本推理
-model = MiniMindOmni(OmniConfig(), audio_encoder_path=SENSEVOICE_DIR, vision_model_path=SIGLIP_DIR).eval()
+model = BaizeOmni(OmniConfig(), audio_encoder_path=SENSEVOICE_DIR, vision_model_path=SIGLIP_DIR).eval()
 model.load_state_dict(torch.load("out/sft_omni_768.pth", map_location="cpu"), strict=False)
 ```
 

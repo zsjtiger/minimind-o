@@ -5,7 +5,7 @@ import transformers
 import warnings
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from baize_v.config import OmniConfig
-from baize_v.models import MiniMindOmni
+from baize_v.models import BaizeOmni
 from baize_v.paths import TOKENIZER_DIR, SENSEVOICE_DIR, SIGLIP_DIR, OUT_DIR
 
 warnings.filterwarnings('ignore', category=UserWarning)
@@ -13,8 +13,8 @@ warnings.filterwarnings('ignore', category=UserWarning)
 
 def convert_torch2transformers(torch_path, transformers_path, lm_config, dtype=torch.bfloat16):
     OmniConfig.register_for_auto_class()
-    MiniMindOmni.register_for_auto_class("AutoModelForCausalLM")
-    model = MiniMindOmni(lm_config, audio_encoder_path=SENSEVOICE_DIR, vision_model_path=SIGLIP_DIR)
+    BaizeOmni.register_for_auto_class("AutoModelForCausalLM")
+    model = BaizeOmni(lm_config, audio_encoder_path=SENSEVOICE_DIR, vision_model_path=SIGLIP_DIR)
     state_dict = torch.load(torch_path, map_location='cpu')
     model.load_state_dict(state_dict, strict=False)
     model = model.to(dtype)

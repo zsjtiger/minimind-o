@@ -2,7 +2,7 @@ import os
 import torch
 from transformers import AutoTokenizer
 
-from ..models.omni import MiniMindOmni
+from ..models.omni import BaizeOmni
 from ..paths import TOKENIZER_DIR, SENSEVOICE_DIR, SIGLIP_DIR, OUT_DIR
 from .dist import Logger
 
@@ -24,7 +24,7 @@ def log_model_params(model, ignore_patterns=['audio_encoder', 'vision_encoder'])
 
 def init_omni_model(omni_config, from_weight='full_sft', tokenizer_path=TOKENIZER_DIR, audio_encoder_path=SENSEVOICE_DIR, vision_model_path=SIGLIP_DIR, save_dir=OUT_DIR, device='cuda', freeze_backbone='none', from_resume=0):
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-    model = MiniMindOmni(omni_config, audio_encoder_path=audio_encoder_path, vision_model_path=vision_model_path)
+    model = BaizeOmni(omni_config, audio_encoder_path=audio_encoder_path, vision_model_path=vision_model_path)
     
     if from_weight != 'none':
         moe_suffix = '_moe' if omni_config.use_moe else ''

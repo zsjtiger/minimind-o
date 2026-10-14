@@ -1,4 +1,4 @@
-"""MiniMind-O SFT 训练入口。
+"""Baize-V SFT 训练入口。
 
 用法（仓库根目录，已执行 ``uv sync``）::
 
@@ -31,7 +31,7 @@ warnings.filterwarnings('ignore')
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="MiniMind-O SFT")
+    parser = argparse.ArgumentParser(description="Baize-V SFT")
     parser.add_argument("--save_dir", type=str, default=OUT_DIR, help="模型保存目录")
     parser.add_argument('--save_weight', default='sft_omni', type=str, help="保存权重的前缀名")
     parser.add_argument("--epochs", type=int, default=15, help="训练轮数")
@@ -56,7 +56,7 @@ if __name__ == "__main__":
     parser.add_argument('--freeze_backbone', default='none', type=str, choices=['none', 'all', 'last1'], help="冻结主干模型: none=全量训练, all=只训练audio层, last1=只训练最后1层+audio层")
     parser.add_argument('--mode', default='all', type=str, choices=['all', 'audio_proj', 'vision_proj'], help="训练模式: all=全量训练, audio_proj=只训练audio_proj, vision_proj=只训练vision_proj")
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb")
-    parser.add_argument("--wandb_project", type=str, default="MiniMind-O-SFT", help="wandb项目名")
+    parser.add_argument("--wandb_project", type=str, default="Baize-V-SFT", help="wandb项目名")
     parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1], help="是否使用torch.compile加速（0=否，1=是）")
     args = parser.parse_args()
 
@@ -86,7 +86,7 @@ if __name__ == "__main__":
         import swanlab as wandb
         wandb_id = ckp_data.get('wandb_id') if ckp_data else None
         resume = 'must' if wandb_id else None
-        wandb_run_name = f"MiniMind-O-SFT-Epoch-{args.epochs}-BatchSize-{args.batch_size}-LR-{args.learning_rate}"
+        wandb_run_name = f"Baize-V-SFT-Epoch-{args.epochs}-BatchSize-{args.batch_size}-LR-{args.learning_rate}"
         wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
     
     # ========== 5. 定义模型、数据、优化器 ==========

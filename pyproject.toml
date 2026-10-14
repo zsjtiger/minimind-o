@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "baize-v"
 version = "0.1.0"
-description = "Baize-V：基于 MiniMind 的全模态（文本 / 语音 / 图像）对话模型"
+description = "Baize-V：基于 MiniMind 基座的全模态（文本 / 语音 / 图像）对话模型"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10,<3.13"  # pydub 依赖的 audioop 在 3.13 中已移除

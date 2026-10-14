@@ -4,7 +4,7 @@ from contextlib import nullcontext
 import torch
 from torch import optim
 
-from baize_v.models.omni import MiniMindOmni
+from baize_v.models.omni import BaizeOmni
 from baize_v.train.checkpoint import omni_checkpoint
 from baize_v.train.init import init_omni_model
 from baize_v.train.losses import compute_losses
@@ -40,7 +40,7 @@ def test_compute_losses_finite(tiny_model):
 def test_checkpoint_roundtrip(tmp_path):
     cfg = make_tiny_config()
     torch.manual_seed(0)
-    model = MiniMindOmni(cfg, audio_encoder_path=MISSING, vision_model_path=MISSING)
+    model = BaizeOmni(cfg, audio_encoder_path=MISSING, vision_model_path=MISSING)
     opt = optim.AdamW(model.parameters(), lr=1e-4)
     omni_checkpoint(cfg, weight="t", model=model, optimizer=opt, epoch=1, step=5, save_dir=str(tmp_path))
     assert os.path.exists(tmp_path / "t_64.pth") and os.path.exists(tmp_path / "t_64_resume.pth")
@@ -54,7 +54,7 @@ def test_checkpoint_roundtrip(tmp_path):
 def test_init_omni_model_without_weights(tmp_path):
     model, tokenizer = init_omni_model(make_tiny_config(), from_weight="none", audio_encoder_path=MISSING,
                                        vision_model_path=MISSING, save_dir=str(tmp_path), device="cpu")
-    assert isinstance(model, MiniMindOmni)
+    assert isinstance(model, BaizeOmni)
     assert len(tokenizer) > 0
 
 
@@ -76,7 +76,7 @@ def test_train_epoch_one_step(tmp_path, monkeypatch, tokenizer):
 
     cfg = make_tiny_config()
     torch.manual_seed(0)
-    model = MiniMindOmni(cfg, audio_encoder_path=MISSING, vision_model_path=MISSING).train()
+    model = BaizeOmni(cfg, audio_encoder_path=MISSING, vision_model_path=MISSING).train()
     monkeypatch.setattr(loop, "CHECKPOINT_DIR", str(tmp_path / "ckpt"))
     args = SimpleNamespace(device="cpu", epochs=1, learning_rate=1e-4, accumulation_steps=1, grad_clip=1.0,
                            log_interval=1, save_interval=1000, save_dir=str(tmp_path), save_weight="t")

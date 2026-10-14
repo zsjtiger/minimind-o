@@ -7,7 +7,7 @@ from flask_sock import Sock
 from PIL import Image
 from pydub import AudioSegment
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from baize_v.models import MiniMindOmni
+from baize_v.models import BaizeOmni
 from baize_v.inference.realtime import RealtimeSession
 from baize_v.inference.loader import scan_hf_models
 from baize_v.train.init import log_model_params
@@ -194,8 +194,8 @@ def load_main_model(model_path, model_name):
         if torch.cuda.is_available(): torch.cuda.empty_cache()
         tok = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         m = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True)
-        vision_encoder, vision_processor = MiniMindOmni.load_vision(SIGLIP_DIR)
-        audio_encoder, audio_processor = MiniMindOmni.load_sensevoice(SENSEVOICE_DIR)
+        vision_encoder, vision_processor = BaizeOmni.load_vision(SIGLIP_DIR)
+        audio_encoder, audio_processor = BaizeOmni.load_sensevoice(SENSEVOICE_DIR)
         object.__setattr__(m, 'vision_encoder', vision_encoder)
         object.__setattr__(m, 'vision_processor', vision_processor)
         object.__setattr__(m, 'audio_encoder', audio_encoder)

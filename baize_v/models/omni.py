@@ -10,7 +10,7 @@ from .encoders import SenseVoiceAudioProcessor
 from ..paths import SENSEVOICE_DIR, SIGLIP_DIR
 
 
-class MiniMindOmni(MiniMindForCausalLM):
+class BaizeOmni(MiniMindForCausalLM):
     config_class = OmniConfig
     def __init__(self, config: OmniConfig = None, audio_encoder_path=SENSEVOICE_DIR, vision_model_path=SIGLIP_DIR):
         config = config or OmniConfig()
@@ -31,7 +31,7 @@ class MiniMindOmni(MiniMindForCausalLM):
     @staticmethod
     def load_sensevoice(path):
         if not os.path.exists(path):
-            warnings.warn(f"[MiniMindOmni] SenseVoice path not found: {path}")
+            warnings.warn(f"[BaizeOmni] SenseVoice path not found: {path}")
             return None, None
         logging.getLogger().setLevel(logging.ERROR)
         hf_logging.set_verbosity_error()
@@ -91,7 +91,7 @@ class MiniMindOmni(MiniMindForCausalLM):
     @staticmethod
     def load_vision(path):
         if path is None or not os.path.exists(path):
-            warnings.warn(f"[MiniMindOmni] Vision model path not found: {path}. vision_encoder will be None!")
+            warnings.warn(f"[BaizeOmni] Vision model path not found: {path}. vision_encoder will be None!")
             return None, None
         hf_logging.set_verbosity_error()
         try:
@@ -302,3 +302,6 @@ class MiniMindOmni(MiniMindForCausalLM):
             else:
                 yield None, audio_frame
 
+
+# 旧名称兼容：MiniMindOmni 已更名为 BaizeOmni
+MiniMindOmni = BaizeOmni

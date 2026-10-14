@@ -3,7 +3,7 @@ import os
 
 import torch
 
-from baize_v.models import MiniMindOmni
+from baize_v.models import BaizeOmni
 from _helpers import make_tiny_config, MISSING
 
 GOLDEN = os.path.join(os.path.dirname(__file__), "fixtures", "omni_tiny_state_dict.json")
@@ -28,7 +28,7 @@ def test_forward_shapes(tiny_model):
 
 def test_moe_forward_has_aux_loss():
     torch.manual_seed(0)
-    model = MiniMindOmni(make_tiny_config(use_moe=True, num_experts=2), audio_encoder_path=MISSING, vision_model_path=MISSING).train()
+    model = BaizeOmni(make_tiny_config(use_moe=True, num_experts=2), audio_encoder_path=MISSING, vision_model_path=MISSING).train()
     ids = torch.randint(0, 6000, (1, 9, 8))
     ids[:, :8, :] = 2049
     out = model(ids)

@@ -11,7 +11,7 @@
 | `model/model_omni.py` 中的 projector | `baize_v/models/projectors.py` |
 | `model/model_omni.py` 中的 Talker | `baize_v/models/talker.py` |
 | `model/model_omni.py` 中的 `SenseVoiceAudioProcessor` | `baize_v/models/encoders.py` |
-| `model/model_omni.py` 中的 `MiniMindOmni` | `baize_v/models/omni.py` |
+| `model/model_omni.py` 中的 `BaizeOmni` | `baize_v/models/omni.py` |
 | `model/model_omni.py` 中的 `SileroVAD`、`RealtimeSession` | `baize_v/inference/realtime.py` |
 | `dataset/omni_dataset.py` | `baize_v/data/dataset.py`，其中的聊天模板、增强、标签函数分别移至 `chat.py`、`augment.py`、`labels.py` |
 | `trainer/trainer_utils.py` | `baize_v/train/{dist,schedule,init,checkpoint}.py`，`vlm_collate_fn` 移至 `data/collate.py` |
@@ -33,6 +33,10 @@
 两个 Web 入口中重复的 `scan_hf_models` 已合并为 `baize_v/inference/loader.py`。
 
 ## 需要用户手动处理的变化
+
+### 0. 模型类更名
+
+`MiniMindOmni` 更名为 `BaizeOmni`。旧名称在 `baize_v/models/omni.py` 中保留了别名，旧代码无需立即修改。`model_type` 仍为 `minimind-o`，以便已导出的 transformers 模型能被识别。
 
 ### 1. 外部预训练权重目录改为 `pretrained/`
 

@@ -18,7 +18,7 @@ import gradio as gr
 from threading import Thread, Lock
 from PIL import Image
 from transformers import AutoTokenizer, AutoModelForCausalLM, MimiModel
-from baize_v.models import MiniMindOmni
+from baize_v.models import BaizeOmni
 from baize_v.inference.loader import scan_hf_models
 from baize_v.paths import SENSEVOICE_DIR, SIGLIP_DIR, MIMI_DIR, SPEAKER_DIR
 logging.getLogger().setLevel(logging.ERROR)
@@ -93,8 +93,8 @@ def load_hf_model(model_path):
         [sys.modules.pop(k) for k in list(sys.modules) if 'transformers_modules' in k]
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True)
-        vision_encoder, vision_processor = MiniMindOmni.load_vision(args.vision_model)
-        audio_encoder, audio_processor = MiniMindOmni.load_sensevoice(args.audio_encoder)
+        vision_encoder, vision_processor = BaizeOmni.load_vision(args.vision_model)
+        audio_encoder, audio_processor = BaizeOmni.load_sensevoice(args.audio_encoder)
         object.__setattr__(model, 'vision_encoder', vision_encoder)
         object.__setattr__(model, 'vision_processor', vision_processor)
         object.__setattr__(model, 'audio_encoder', audio_encoder)
@@ -250,8 +250,8 @@ def launch_gradio(server_name="0.0.0.0", server_port=8888):
 
         yield chat_history, final_audio if final_audio else gr.update(), None, model_history, ""
 
-    with gr.Blocks(title="MiniMind-O", js="()=>{new MutationObserver(()=>{const m=document.getElementById('mic-box');if(!m)return;const h=!!m.querySelector('audio');document.body.classList.toggle('has-audio',h);const t=document.querySelector('textarea');if(t){t.placeholder=h?'已加载语音，点击发送':'输入文本';t.disabled=h}}).observe(document.body,{childList:true,subtree:true})}", css=".app{padding-top:6px!important} #component-0{gap:6px!important} #component-1{padding:2px 0!important;margin:0!important;min-height:0!important;border:none!important} #component-1 .padding{padding:0!important} #chatbox img{max-width:120px!important;max-height:120px!important;border-radius:8px} textarea{overflow-y:hidden!important;height:auto!important;min-height:30px!important;max-height:60px!important} #mic-box{max-height:150px!important;overflow:hidden!important} #mic-box .wrap span.or,#mic-box .wrap span:first-child{display:none!important} #mic-box .wrap{font-size:0!important;min-height:40px!important;padding:8px!important} #mic-box .wrap::after{content:'上传/录音';font-size:14px!important} #mic-box .mic-select{display:none!important} .has-audio textarea{opacity:0.4!important;pointer-events:none!important} .has-audio .upload-button,.has-audio [data-testid='upload-button']{display:none!important} @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}") as demo:
-        gr.HTML('<div style="text-align:center;margin:2px 0"><span style="font-size:1.2rem;font-weight:bold;font-style:italic">MiniMind-O</span> <span style="color:#999;font-size:0.8rem">text / image / audio → text + audio</span></div>')
+    with gr.Blocks(title="Baize-V", js="()=>{new MutationObserver(()=>{const m=document.getElementById('mic-box');if(!m)return;const h=!!m.querySelector('audio');document.body.classList.toggle('has-audio',h);const t=document.querySelector('textarea');if(t){t.placeholder=h?'已加载语音，点击发送':'输入文本';t.disabled=h}}).observe(document.body,{childList:true,subtree:true})}", css=".app{padding-top:6px!important} #component-0{gap:6px!important} #component-1{padding:2px 0!important;margin:0!important;min-height:0!important;border:none!important} #component-1 .padding{padding:0!important} #chatbox img{max-width:120px!important;max-height:120px!important;border-radius:8px} textarea{overflow-y:hidden!important;height:auto!important;min-height:30px!important;max-height:60px!important} #mic-box{max-height:150px!important;overflow:hidden!important} #mic-box .wrap span.or,#mic-box .wrap span:first-child{display:none!important} #mic-box .wrap{font-size:0!important;min-height:40px!important;padding:8px!important} #mic-box .wrap::after{content:'上传/录音';font-size:14px!important} #mic-box .mic-select{display:none!important} .has-audio textarea{opacity:0.4!important;pointer-events:none!important} .has-audio .upload-button,.has-audio [data-testid='upload-button']{display:none!important} @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}") as demo:
+        gr.HTML('<div style="text-align:center;margin:2px 0"><span style="font-size:1.2rem;font-weight:bold;font-style:italic">Baize-V</span> <span style="color:#999;font-size:0.8rem">text / image / audio → text + audio</span></div>')
 
         chatbot = gr.Chatbot(label="", height=380, elem_id="chatbox", type="messages")
         model_history = gr.State([])
@@ -276,7 +276,7 @@ def launch_gradio(server_name="0.0.0.0", server_port=8888):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="MiniMind-O Gradio Demo")
+    parser = argparse.ArgumentParser(description="Baize-V Gradio Demo")
     parser.add_argument('--load_from', default='./', type=str, help="transformers模型扫描目录")
     parser.add_argument('--audio_encoder', default=SENSEVOICE_DIR, type=str)
     parser.add_argument('--vision_model', default=SIGLIP_DIR, type=str)

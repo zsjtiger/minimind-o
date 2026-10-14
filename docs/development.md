@@ -72,9 +72,9 @@ uv run ruff check baize_v tests scripts
 
 1. **权重加载**：`load_state_dict(strict=False)` 时打印 missing / unexpected 键。
 2. **checkpoint 布局**：模型权重只保存一份；`--save_dir` 与 `checkpoints/` 统一。续训文件只存优化器、scaler 等状态。
-3. **性能**：去掉每次 forward 中的 `freqs_cos[0, 0] == 0` 检查（GPU 同步）；`MiniMindOmni.forward` 中的 dummy gradient 改为更清晰的方式。
+3. **性能**：去掉每次 forward 中的 `freqs_cos[0, 0] == 0` 检查（GPU 同步）；`BaizeOmni.forward` 中的 dummy gradient 改为更清晰的方式。
 4. **Web 应用**：切换模型时复用已加载的 SenseVoice 与 SigLIP，不重复读盘。
 5. **数据集**：避免整表读入内存，改为按需读取 parquet。
 6. **训练脚本**：`--use_wandb` 实际使用 SwanLab，参数名与日志名需统一；将 `torch.cuda.amp` 替换为 `torch.amp`。
 7. **Demo 去重**：Flask 与 Gradio 两个入口之间的 Mimi 解码、音色加载逻辑还有重复，可进一步合并到 `baize_v/inference/`。
-8. **生成逻辑**：`MiniMindOmni.stream_generate` 约 80 行，可拆分为采样函数，保持 `model.generate` 接口不变。
+8. **生成逻辑**：`BaizeOmni.stream_generate` 约 80 行，可拆分为采样函数，保持 `model.generate` 接口不变。

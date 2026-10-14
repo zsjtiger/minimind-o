@@ -14,7 +14,7 @@ baize-v/                        （仓库目录名沿用 minimind-o）
 │   │   ├── talker.py           Talker（音频 codec 码本的自回归头）
 │   │   ├── projectors.py       音频 / 视觉 projector
 │   │   ├── encoders.py         SenseVoice 特征前端的包装
-│   │   └── omni.py             MiniMindOmni：thinker + talker 的完整模型与生成逻辑
+│   │   └── omni.py             BaizeOmni：thinker + talker 的完整模型与生成逻辑
 │   ├── data/                   数据处理
 │   │   ├── dataset.py          OmniDataset（parquet → 训练样本）
 │   │   ├── chat.py             系统提示注入、思考块后处理

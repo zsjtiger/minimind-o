@@ -9,7 +9,7 @@ from PIL import Image
 from pydub import AudioSegment
 from transformers import AutoTokenizer, AutoModelForCausalLM, MimiModel
 from baize_v.config import OmniConfig
-from baize_v.models import MiniMindOmni
+from baize_v.models import BaizeOmni
 from baize_v.data import OmniDataset
 from baize_v.train.dist import setup_seed
 from baize_v.train.init import log_model_params
@@ -23,7 +23,7 @@ def init_model(args):
     if is_torch:
         moe_suffix = '_moe' if args.use_moe else ''
         ckp = os.path.join(args.save_dir, f'{args.weight}_{args.hidden_size}{moe_suffix}.pth')
-        model = MiniMindOmni(
+        model = BaizeOmni(
             OmniConfig(
                 hidden_size=args.hidden_size, 
                 num_hidden_layers=args.num_hidden_layers, 
@@ -35,8 +35,8 @@ def init_model(args):
         model.load_state_dict(torch.load(ckp, map_location=args.device), strict=False)
     else:
         model = AutoModelForCausalLM.from_pretrained(args.load_from, trust_remote_code=True)
-        model.audio_encoder, model.audio_processor = MiniMindOmni.load_sensevoice(SENSEVOICE_DIR)
-        model.vision_encoder, model.vision_processor = MiniMindOmni.load_vision(SIGLIP_DIR)
+        model.audio_encoder, model.audio_processor = BaizeOmni.load_sensevoice(SENSEVOICE_DIR)
+        model.vision_encoder, model.vision_processor = BaizeOmni.load_vision(SIGLIP_DIR)
     log_model_params(model)
     if model.audio_encoder is not None: model.audio_encoder.to(args.device)
     if model.vision_encoder is not None: model.vision_encoder.to(args.device)
@@ -92,7 +92,7 @@ def eval_sample(model, tokenizer, args, idx, prompt, audio_inputs, output_name, 
 
 
 def main():
-    parser = argparse.ArgumentParser(description="MiniMind-O Chat")
+    parser = argparse.ArgumentParser(description="Baize-V Chat")
     parser.add_argument('--load_from', default='torch', type=str, help="模型加载路径（torch=原生torch权重，否则为 HF 目录）")
     parser.add_argument('--save_dir', default=OUT_DIR, type=str, help="模型权重目录")
     parser.add_argument('--weight', default='sft_omni', type=str, help="权重名称前缀")
