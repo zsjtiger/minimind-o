@@ -21,6 +21,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, MimiModel
 from baize_v.models import BaizeOmni
 from baize_v.inference.loader import scan_hf_models
 from baize_v.paths import SENSEVOICE_DIR, SIGLIP_DIR, MIMI_DIR, SPEAKER_DIR
+from baize_v.tokens import AUDIO_PAD_TOKEN
 logging.getLogger().setLevel(logging.ERROR)
 with contextlib.redirect_stdout(io.StringIO()):
     from funasr import AutoModel
@@ -79,7 +80,7 @@ def frames_to_mimi(frames):
 def decode_mimi(mimi_codes):
     if mimi_codes is None or mimi_codes.numel() == 0:
         return None
-    filtered = torch.where(mimi_codes >= 2049, torch.zeros_like(mimi_codes), mimi_codes).to(next(mimi_model.parameters()).device)
+    filtered = torch.where(mimi_codes >= AUDIO_PAD_TOKEN, torch.zeros_like(mimi_codes), mimi_codes).to(next(mimi_model.parameters()).device)
     with torch.no_grad():
         audio = mimi_model.decode(filtered).audio_values
     return audio.squeeze().float().cpu().numpy()

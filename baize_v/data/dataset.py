@@ -15,6 +15,7 @@ from torch.utils.data import Dataset
 from .chat import pre_processing_chat, post_processing_chat
 from .augment import augment_wav, augment_mel
 from .labels import generate_text_labels, apply_scheduled_sampling
+from ..tokens import AUDIO_STOP_TOKEN, AUDIO_PAD_TOKEN, AUDIO_SPK_TOKEN, AUDIO_VOCAB_SIZE
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -22,10 +23,10 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 class OmniDataset(Dataset):
     def __init__(self, data_path, tokenizer, audio_processor=None, vision_processor=None,
                  max_length=1200, audio_special_token='<|audio_pad|>', image_special_token='<|image_pad|>',
-                 audio_stop_token=2050,  # <|audio_stop|>
-                 audio_pad_token=2049,  # <|audio_pad|>
-                 audio_spk_token=2051,  # <|audio_spk|>
-                 audio_vocab_size=2112,  # 2048 mimi codes + 64 special tokens
+                 audio_stop_token=AUDIO_STOP_TOKEN,
+                 audio_pad_token=AUDIO_PAD_TOKEN,
+                 audio_spk_token=AUDIO_SPK_TOKEN,
+                 audio_vocab_size=AUDIO_VOCAB_SIZE,
                  scheduled_sampling=0.05,
                  image_token_len=64):
         super().__init__()

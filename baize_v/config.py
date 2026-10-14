@@ -1,6 +1,7 @@
 import math
 
 from transformers import PretrainedConfig
+from .tokens import AUDIO_VOCAB_SIZE, AUDIO_PAD_TOKEN, AUDIO_STOP_TOKEN, AUDIO_SPK_TOKEN
 
 
 class BaizeConfig(PretrainedConfig):
@@ -50,10 +51,10 @@ class OmniConfig(BaizeConfig):
         self.audio_ids = kwargs.get("audio_ids", [16]) # "<|audio_pad|>" token id
         self.audio_special_token = kwargs.get("audio_special_token", "<|audio_pad|>")
         self.audio_hidden_size = kwargs.get("audio_hidden_size", 512)
-        self.audio_vocab_size = kwargs.get("audio_vocab_size", 2112)
-        self.audio_pad_token = kwargs.get("audio_pad_token", 2049)
-        self.audio_stop_token = kwargs.get("audio_stop_token", 2050)
-        self.audio_spk_token = kwargs.get("audio_spk_token", 2051)
+        self.audio_vocab_size = kwargs.get("audio_vocab_size", AUDIO_VOCAB_SIZE)
+        self.audio_pad_token = kwargs.get("audio_pad_token", AUDIO_PAD_TOKEN)
+        self.audio_stop_token = kwargs.get("audio_stop_token", AUDIO_STOP_TOKEN)
+        self.audio_spk_token = kwargs.get("audio_spk_token", AUDIO_SPK_TOKEN)
         self.spk_emb_size = kwargs.get("spk_emb_size", 192)
         self.think_end_ids = kwargs.get("think_end_ids", [26, 234, 234]) # </think>\n\n
         self.image_ids = kwargs.get("image_ids", [12]) # "<|image_pad|>" token id

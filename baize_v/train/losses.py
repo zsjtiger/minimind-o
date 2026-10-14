@@ -1,4 +1,5 @@
 from torch import nn
+from ..tokens import AUDIO_STOP_TOKEN
 
 
 def compute_losses(res, labels, audio_labels):
@@ -17,7 +18,7 @@ def compute_losses(res, labels, audio_labels):
         target_flat = audio_labels[:, i, :].reshape(-1)
         layer_loss = loss_fct(al_flat, target_flat)
         valid_mask = (target_flat != -100).float()
-        stop_mask = (target_flat == 2050).float()
+        stop_mask = (target_flat == AUDIO_STOP_TOKEN).float()
         weighted_loss = layer_loss * valid_mask * (1 + stop_mask * 9)
         msum = valid_mask.sum()
         if msum > 0:

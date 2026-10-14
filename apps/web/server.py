@@ -10,8 +10,9 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from baize_v.models import BaizeOmni
 from baize_v.inference.realtime import RealtimeSession
 from baize_v.inference.loader import scan_hf_models
-from baize_v.train.init import log_model_params
+from baize_v.models.summary import log_model_params
 from baize_v.paths import SENSEVOICE_DIR, SIGLIP_DIR, MIMI_DIR, CAMPPLUS_DIR, SPEAKER_DIR, VAD_PATH
+from baize_v.tokens import AUDIO_PAD_TOKEN
 logging.getLogger().setLevel(logging.ERROR)
 with contextlib.redirect_stdout(io.StringIO()):
     from funasr import AutoModel
@@ -61,7 +62,7 @@ def _mimi_decode(frames):
     codes = [f for f in frames if f and len(f) == 8]
     if not codes or not M['mimi']: return None
     mc = torch.tensor(codes, dtype=torch.long, device=M['device']).T.unsqueeze(0)
-    mc = torch.where(mc >= 2049, torch.zeros_like(mc), mc)
+    mc = torch.where(mc >= AUDIO_PAD_TOKEN, torch.zeros_like(mc), mc)
     with torch.no_grad():
         au = M['mimi'].decode(mc).audio_values.squeeze().cpu().numpy()
     return au, mc.shape[-1]
@@ -474,7 +475,7 @@ def init_model(args):
     print('Warmup...')
     with torch.no_grad():
         ids = torch.tensor([[1, 2, 3]], device=args.device)
-        au = torch.full((1, 8, 3), 2049, dtype=torch.long, device=args.device)
+        au = torch.full((1, 8, 3), AUDIO_PAD_TOKEN, dtype=torch.long, device=args.device)
         M['model'].forward(torch.cat((au, ids.unsqueeze(1)), dim=1))
         if M['model'].audio_encoder: M['model'].audio_encoder(torch.zeros(1, 100, 560, device=args.device), torch.tensor([100], device=args.device))
         if M['mimi']: M['mimi'].decode(torch.zeros(1, 8, 1, dtype=torch.long, device=args.device))

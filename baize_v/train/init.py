@@ -7,21 +7,6 @@ from ..paths import TOKENIZER_DIR, SENSEVOICE_DIR, SIGLIP_DIR, OUT_DIR
 from .dist import Logger
 
 
-def log_model_params(model, ignore_patterns=['audio_encoder', 'vision_encoder']):
-    def should_count(n): return not any(p in n for p in ignore_patterns)
-    total = sum(p.numel() for n, p in model.named_parameters() if should_count(n)) / 1e6
-    cfg = model.config
-    n_routed = getattr(cfg, 'n_routed_experts', getattr(cfg, 'num_experts', 0))
-    n_active = getattr(cfg, 'num_experts_per_tok', 0)
-    n_shared = getattr(cfg, 'n_shared_experts', 0)
-    expert = sum(p.numel() for n, p in model.named_parameters() if 'mlp.experts.0.' in n and should_count(n)) / 1e6
-    shared_expert = sum(p.numel() for n, p in model.named_parameters() if 'mlp.shared_experts.0.' in n and should_count(n)) / 1e6
-    base = total - (expert * n_routed) - (shared_expert * n_shared)
-    active = base + (expert * n_active) + (shared_expert * n_shared)
-    if active < total: Logger(f'Model Params: {total:.2f}M-A{active:.2f}M')
-    else: Logger(f'Model Params: {total:.2f}M')
-
-
 def init_omni_model(omni_config, from_weight='full_sft', tokenizer_path=TOKENIZER_DIR, audio_encoder_path=SENSEVOICE_DIR, vision_model_path=SIGLIP_DIR, save_dir=OUT_DIR, device='cuda', freeze_backbone='none', from_resume=0):
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     model = BaizeOmni(omni_config, audio_encoder_path=audio_encoder_path, vision_model_path=vision_model_path)

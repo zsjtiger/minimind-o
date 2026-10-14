@@ -1,12 +1,12 @@
-import os, torch, warnings, contextlib, io, logging
+import torch
 import torch.nn.functional as F
-from transformers import SiglipImageProcessor, SiglipVisionModel, logging as hf_logging
 from transformers.modeling_outputs import MoeCausalLMOutputWithPast
 from ..config import OmniConfig
 from .llm import BaizeForCausalLM, MOEFeedForward, precompute_freqs_cis
 from .projectors import MMAudioProjector, MMVisionProjector
 from .talker import TalkerModule
-from .encoders import SenseVoiceAudioProcessor
+from .encoders import load_sensevoice, load_vision
+from ..tokens import MIMI_CODEBOOK_SIZE
 from ..paths import SENSEVOICE_DIR, SIGLIP_DIR
 
 
@@ -28,19 +28,7 @@ class BaizeOmni(BaizeForCausalLM):
         object.__setattr__(self, 'vision_encoder', vision_encoder)
         object.__setattr__(self, 'vision_processor', vision_processor)
 
-    @staticmethod
-    def load_sensevoice(path):
-        if not os.path.exists(path):
-            warnings.warn(f"[BaizeOmni] SenseVoice path not found: {path}")
-            return None, None
-        logging.getLogger().setLevel(logging.ERROR)
-        hf_logging.set_verbosity_error()
-        with contextlib.redirect_stdout(io.StringIO()):
-            from funasr import AutoModel
-            m = AutoModel(model=path, trust_remote_code=True, disable_update=True, device="cpu")
-        encoder, frontend = m.model.encoder, m.kwargs["frontend"]
-        for p in encoder.parameters(): p.requires_grad = False
-        return encoder.eval().float(), SenseVoiceAudioProcessor(frontend.eval())
+    load_sensevoice = staticmethod(load_sensevoice)
 
     @torch.compiler.disable
     def encode_audio_inputs(self, audio_inputs, audio_lens=None):
@@ -88,20 +76,7 @@ class BaizeOmni(BaizeForCausalLM):
             out.append(hb)
         return torch.stack(out)
     
-    @staticmethod
-    def load_vision(path):
-        if path is None or not os.path.exists(path):
-            warnings.warn(f"[BaizeOmni] Vision model path not found: {path}. vision_encoder will be None!")
-            return None, None
-        hf_logging.set_verbosity_error()
-        try:
-            model = SiglipVisionModel.from_pretrained(path)
-        except (RuntimeError, ValueError):
-            return None, None
-        processor = SiglipImageProcessor.from_pretrained(path)
-        for p in model.parameters():
-            p.requires_grad = False
-        return model.eval(), processor
+    load_vision = staticmethod(load_vision)
 
     @torch.compiler.disable
     def get_image_embeddings(self, image_inputs):
@@ -283,7 +258,7 @@ class BaizeOmni(BaizeForCausalLM):
                     top_val, top_idx = logits_i.topk(50)
                     code = top_idx[torch.multinomial(F.softmax(top_val, dim=-1), 1)].item()
                     audio_codes[i].append(code)
-                    if audio_stop_pos[i] is None and code >= 2048: audio_stop_pos[i] = len(audio_codes[i]) - 1
+                    if audio_stop_pos[i] is None and code >= MIMI_CODEBOOK_SIZE: audio_stop_pos[i] = len(audio_codes[i]) - 1
 
             if text_finished and all(audio_stop_pos[i] is not None for i in range(8)): break
 

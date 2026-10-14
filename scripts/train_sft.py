@@ -22,7 +22,8 @@ from baize_v.config import OmniConfig
 from baize_v.data import OmniDataset, omni_collate_fn
 from baize_v.train.loop import train_epoch
 from baize_v.train.dist import is_main_process, init_distributed_mode, setup_seed, Logger
-from baize_v.train.init import init_omni_model, log_model_params
+from baize_v.train.init import init_omni_model
+from baize_v.models.summary import log_model_params
 from baize_v.train.checkpoint import omni_checkpoint
 from baize_v.train.schedule import SkipBatchSampler
 from baize_v.paths import OUT_DIR, CHECKPOINT_DIR, DATA_DIR, SENSEVOICE_DIR, SIGLIP_DIR

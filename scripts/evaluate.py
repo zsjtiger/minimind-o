@@ -12,8 +12,9 @@ from baize_v.config import OmniConfig
 from baize_v.models import BaizeOmni
 from baize_v.data import OmniDataset
 from baize_v.train.dist import setup_seed
-from baize_v.train.init import log_model_params
+from baize_v.models.summary import log_model_params
 from baize_v.paths import TOKENIZER_DIR, SENSEVOICE_DIR, SIGLIP_DIR, MIMI_DIR, OUT_DIR, EVAL_AUDIO_DIR, SPEAKER_DIR
+from baize_v.tokens import AUDIO_PAD_TOKEN
 warnings.filterwarnings('ignore')
 
 
@@ -77,7 +78,7 @@ def eval_sample(model, tokenizer, args, idx, prompt, audio_inputs, output_name, 
                         print('⚠️  生成的Mimi codes为空，跳过保存。')
                         return
                     mimi_codes = torch.tensor(codes, dtype=torch.long).T.unsqueeze(0).to(args.device)
-                    filtered = torch.where(mimi_codes >= 2049, torch.zeros_like(mimi_codes), mimi_codes)
+                    filtered = torch.where(mimi_codes >= AUDIO_PAD_TOKEN, torch.zeros_like(mimi_codes), mimi_codes)
                     audio = model.mimi_model.decode(filtered).audio_values
                     output_path = os.path.join(args.output_dir, output_name)
                     wav_path = output_path.rsplit('.', 1)[0] + '.wav'
