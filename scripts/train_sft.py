@@ -22,7 +22,7 @@ from baize_v.data import OmniDataset, omni_collate_fn
 from baize_v.train.loop import train_epoch, TrainContext
 from baize_v.train.dist import is_main_process, init_distributed_mode, setup_seed, Logger
 from baize_v.train.init import init_omni_model
-from baize_v.models.summary import log_model_params
+from baize_v.models.summary import log_model_params, report_load_result
 from baize_v.train.checkpoint import omni_checkpoint
 from baize_v.train.schedule import SkipBatchSampler
 from baize_v.paths import OUT_DIR, CHECKPOINT_DIR, DATA_DIR, SENSEVOICE_DIR, SIGLIP_DIR
@@ -55,8 +55,8 @@ if __name__ == "__main__":
     parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
     parser.add_argument('--freeze_backbone', default='none', type=str, choices=['none', 'all', 'last1'], help="冻结主干模型: none=全量训练, all=只训练audio层, last1=只训练最后1层+audio层")
     parser.add_argument('--mode', default='all', type=str, choices=['all', 'audio_proj', 'vision_proj'], help="训练模式: all=全量训练, audio_proj=只训练audio_proj, vision_proj=只训练vision_proj")
-    parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb")
-    parser.add_argument("--wandb_project", type=str, default="Baize-V-SFT", help="wandb项目名")
+    parser.add_argument("--use_swanlab", "--use_wandb", dest="use_swanlab", action="store_true", help="是否使用 SwanLab 记录训练曲线")
+    parser.add_argument("--swanlab_project", "--wandb_project", dest="swanlab_project", type=str, default="Baize-V-SFT", help="SwanLab 项目名")
     parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1], help="是否使用torch.compile加速（0=否，1=是）")
     args = parser.parse_args()
 
@@ -78,16 +78,16 @@ if __name__ == "__main__":
     # ========== 3. 设置混合精度 ==========
     device_type = "cuda" if "cuda" in args.device else "cpu"
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
-    autocast_ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast(dtype=dtype)
+    autocast_ctx = nullcontext() if device_type == "cpu" else torch.autocast(device_type='cuda', dtype=dtype)
     
-    # ========== 4. 配wandb ==========
-    wandb = None
-    if args.use_wandb and is_main_process():
-        import swanlab as wandb
-        wandb_id = ckp_data.get('wandb_id') if ckp_data else None
-        resume = 'must' if wandb_id else None
-        wandb_run_name = f"Baize-V-SFT-Epoch-{args.epochs}-BatchSize-{args.batch_size}-LR-{args.learning_rate}"
-        wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
+    # ========== 4. 配置 SwanLab ==========
+    tracker = None
+    if args.use_swanlab and is_main_process():
+        import swanlab as tracker
+        run_id = (ckp_data.get('run_id') or ckp_data.get('wandb_id')) if ckp_data else None  # 兼容旧 checkpoint 的 wandb_id
+        resume = 'must' if run_id else None
+        run_name = f"Baize-V-SFT-Epoch-{args.epochs}-BatchSize-{args.batch_size}-LR-{args.learning_rate}"
+        tracker.init(project=args.swanlab_project, name=run_name, id=run_id, resume=resume)
     
     # ========== 5. 定义模型、数据、优化器 ==========
     model, tokenizer = init_omni_model(omni_config, from_weight=args.from_weight,
@@ -123,13 +123,13 @@ if __name__ == "__main__":
     )
     
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
-    scaler = torch.cuda.amp.GradScaler(enabled=(args.dtype == 'float16'))
+    scaler = torch.amp.GradScaler('cuda', enabled=(args.dtype == 'float16'))
     optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
     
     # ========== 6. 从ckp恢复状态 ==========
     start_epoch, start_step = 0, 0
     if ckp_data:
-        model.load_state_dict(ckp_data['model'], strict=False)
+        report_load_result(model.load_state_dict(ckp_data['model'], strict=False), label='resume')
         optimizer.load_state_dict(ckp_data['optimizer'])
         scaler.load_state_dict(ckp_data['scaler'])
         start_epoch = ckp_data['epoch']
@@ -149,9 +149,9 @@ if __name__ == "__main__":
         loader = DataLoader(train_ds, batch_sampler=batch_sampler, collate_fn=omni_collate_fn, num_workers=args.num_workers, pin_memory=True)
         if skip > 0:
             Logger(f'Epoch [{epoch + 1}/{args.epochs}]: 跳过前{start_step}个step，从step {start_step + 1}开始')
-            train_epoch(ctx, epoch, loader, len(loader) + skip, start_step, wandb)
+            train_epoch(ctx, epoch, loader, len(loader) + skip, start_step, tracker)
         else:
-            train_epoch(ctx, epoch, loader, len(loader), 0, wandb)
+            train_epoch(ctx, epoch, loader, len(loader), 0, tracker)
     
     # ========== 9. 清理分布进程 ==========
     if dist.is_initialized(): dist.destroy_process_group()

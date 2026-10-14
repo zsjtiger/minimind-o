@@ -10,6 +10,11 @@ from .fusion import inject_audio_features as inject_audio, inject_vision_feature
 from ..paths import SENSEVOICE_DIR, SIGLIP_DIR
 
 
+def unused_param_anchor(*modules):
+    """零值锚点：让本次前向未用到的参数也进入计算图，避免 DDP 报 unused parameter（数值为 0，不影响 loss）。"""
+    return sum(p.sum() for m in modules for p in m.parameters()) * 0
+
+
 class BaizeOmni(BaizeForCausalLM):
     config_class = OmniConfig
     def __init__(self, config: OmniConfig = None, audio_encoder_path=SENSEVOICE_DIR, vision_model_path=SIGLIP_DIR):
@@ -19,7 +24,7 @@ class BaizeOmni(BaizeForCausalLM):
         object.__setattr__(self.model, 'lm_head', self.lm_head)  # alias: self.thinker.lm_head == self.lm_head
         self.talker = TalkerModule(config)
         self.audio_proj = MMAudioProjector(config.audio_hidden_size, config.hidden_size)
-        self.vision_proj = MMVisionProjector(config.image_hidden_size, config.hidden_size, target_tokens=config.image_token_len)
+        self.vision_proj = MMVisionProjector(config.image_hidden_size, config.hidden_size)
         self.audio_pad_token, self.audio_stop_token, self.audio_spk_token = config.audio_pad_token, config.audio_stop_token, config.audio_spk_token
         audio_encoder, audio_processor = self.load_sensevoice(audio_encoder_path)
         object.__setattr__(self, 'audio_encoder', audio_encoder)
@@ -27,6 +32,7 @@ class BaizeOmni(BaizeForCausalLM):
         vision_encoder, vision_processor = self.load_vision(vision_model_path)
         object.__setattr__(self, 'vision_encoder', vision_encoder)
         object.__setattr__(self, 'vision_processor', vision_processor)
+        self._rope_checked = False
 
     load_sensevoice = staticmethod(load_sensevoice)
 
@@ -106,12 +112,14 @@ class BaizeOmni(BaizeForCausalLM):
         past_key_values = past_key_values or ([None] * (n_thinker + n_talker))
         start_pos = past_key_values[0][0].shape[1] if past_key_values[0] is not None else 0
         # Recompute RoPE buffers lost during meta-device init (transformers>=5.x)
-        if self.thinker.freqs_cos[0, 0] == 0:
-            freqs_cos, freqs_sin = precompute_freqs_cis(dim=self.config.head_dim, end=self.config.max_position_embeddings, rope_base=self.config.rope_theta, rope_scaling=self.config.rope_scaling)
-            self.thinker.freqs_cos, self.thinker.freqs_sin = freqs_cos.to(input_ids.device), freqs_sin.to(input_ids.device)
-        if self.talker.freqs_cos[0, 0] == 0:
-            freqs_cos, freqs_sin = precompute_freqs_cis(dim=self.talker.talker_config.head_dim, end=self.config.max_position_embeddings, rope_base=self.config.rope_theta, rope_scaling=self.config.rope_scaling)
-            self.talker.freqs_cos, self.talker.freqs_sin = freqs_cos.to(input_ids.device), freqs_sin.to(input_ids.device)
+        if not self._rope_checked:
+            self._rope_checked = True
+            if self.thinker.freqs_cos[0, 0] == 0:
+                freqs_cos, freqs_sin = precompute_freqs_cis(dim=self.config.head_dim, end=self.config.max_position_embeddings, rope_base=self.config.rope_theta, rope_scaling=self.config.rope_scaling)
+                self.thinker.freqs_cos, self.thinker.freqs_sin = freqs_cos.to(input_ids.device), freqs_sin.to(input_ids.device)
+            if self.talker.freqs_cos[0, 0] == 0:
+                freqs_cos, freqs_sin = precompute_freqs_cis(dim=self.talker.talker_config.head_dim, end=self.config.max_position_embeddings, rope_base=self.config.rope_theta, rope_scaling=self.config.rope_scaling)
+                self.talker.freqs_cos, self.talker.freqs_sin = freqs_cos.to(input_ids.device), freqs_sin.to(input_ids.device)
         presents = []
 
         # ======= Thinker: text-only input, output text logits =======
@@ -158,7 +166,7 @@ class BaizeOmni(BaizeForCausalLM):
 
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
         aux_loss = sum(l.mlp.aux_loss for l in list(self.thinker.layers) + list(self.talker.layers) if isinstance(l.mlp, MOEFeedForward))
-        aux_loss += sum(p.sum() for p in self.audio_proj.parameters()) * 0 + sum(p.sum() for p in self.vision_proj.parameters()) * 0 + sum(p.sum() for p in self.talker.lm_head.adapters.parameters()) * 0 + sum(p.sum() for p in self.talker.spk_proj.parameters()) * 0 # dummy gradient
+        aux_loss += unused_param_anchor(self.audio_proj, self.vision_proj, self.talker.lm_head.adapters, self.talker.spk_proj)
         text_logits = self.thinker.lm_head(h_thinker[:, slice_indices, :])
         audio_logits = self.talker.lm_head(h_talker[:, slice_indices, :])
         

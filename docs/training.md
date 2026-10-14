@@ -33,13 +33,18 @@ bash scripts/recipes/mini.sh          # 单卡 mini 数据集
 | `--learning_rate` | `5e-4` | 峰值学习率，按余弦曲线衰减到 0.1 倍 |
 | `--use_compile` | `0` | 设为 `1` 启用 `torch.compile` |
 | `--use_moe` | `0` | 设为 `1` 使用 MoE 架构 |
-| `--use_wandb` | 关 | 启用 SwanLab 记录（项目名 `--wandb_project`） |
+| `--use_swanlab` | 关 | 启用 SwanLab 记录（项目名 `--swanlab_project`）。旧参数 `--use_wandb` / `--wandb_project` 仍可用 |
 
 运行 `uv run python scripts/train_sft.py --help` 查看全部参数。
 
 ## 续训
 
-加上 `--from_resume 1` 重新运行同一条命令即可。续训文件保存在 `checkpoints/<save_weight>_<hidden>[_moe]_resume.pth`，包含模型、优化器、scaler、epoch、step 和 SwanLab run id。GPU 数量变化时，step 会按比例换算。
+加上 `--from_resume 1` 重新运行同一条命令即可。
+
+- 续训文件：`checkpoints/<save_weight>_<hidden>[_moe]_resume.pth`，包含模型权重、优化器、scaler、epoch、step 和 SwanLab run_id。旧版本保存的 `wandb_id` 仍可读取。
+- 推理用的权重：`--save_dir`（默认 `out/`）下的 `<save_weight>_<hidden>[_moe].pth`，每次保存只写一份，`checkpoints/` 里不再有重复的纯权重副本。
+- 加载权重时如果存在缺失或多余的参数，会在日志中打印数量和示例键名。
+- GPU 数量变化时，step 会按比例换算。
 
 ## 冻结与损失
 

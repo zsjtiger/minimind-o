@@ -19,7 +19,7 @@ from baize_v.config import OmniConfig
 from baize_v.models import BaizeOmni
 from baize_v.data import OmniDataset
 from baize_v.inference.mimi import frames_to_codes, mask_special, decode_codes
-from baize_v.models.summary import log_model_params
+from baize_v.models.summary import log_model_params, report_load_result
 from baize_v.paths import TOKENIZER_DIR, SENSEVOICE_DIR, SIGLIP_DIR, MIMI_DIR, OUT_DIR, EVAL_AUDIO_DIR, SPEAKER_DIR
 from baize_v.train.dist import setup_seed
 
@@ -39,7 +39,7 @@ def init_model(args):
             OmniConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=bool(args.use_moe)),
             audio_encoder_path=SENSEVOICE_DIR, vision_model_path=SIGLIP_DIR,
         )
-        model.load_state_dict(torch.load(ckp, map_location=args.device), strict=False)
+        report_load_result(model.load_state_dict(torch.load(ckp, map_location=args.device), strict=False), label=os.path.basename(ckp))
     else:
         model = AutoModelForCausalLM.from_pretrained(args.load_from, trust_remote_code=True)
         model.audio_encoder, model.audio_processor = BaizeOmni.load_sensevoice(SENSEVOICE_DIR)

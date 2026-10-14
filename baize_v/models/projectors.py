@@ -15,7 +15,7 @@ class MMAudioProjector(nn.Module):
 
 
 class MMVisionProjector(nn.Module):
-    def __init__(self, in_dim, out_dim, source_tokens=64, target_tokens=64):
+    def __init__(self, in_dim, out_dim):
         super().__init__()
         self.mlp = nn.Sequential(
             nn.LayerNorm(in_dim),

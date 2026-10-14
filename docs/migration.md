@@ -79,14 +79,11 @@ uv run python scripts/evaluate.py --help
 
 两者都会扫描 `out/` 下包含权重文件的子目录。
 
-## 未包含在本次迁移中的事项
+## 后续的行为修复
 
-以下问题在阅读代码时发现，但会改变 checkpoint 格式或推理行为，因此留到后续单独处理：
+结构迁移之后又做了一轮行为修复，详见 [development.md](development.md#重构与修复记录)。对用户可见的变化包括：
 
-- 续训时 `checkpoints/` 与 `--save_dir` 双目录写入，权重被保存多份。
-- `load_state_dict(..., strict=False)` 不打印缺失键。
-- 每次 forward 中的 `freqs_cos[0, 0] == 0` 检查会触发 GPU 同步。
-- Web 应用切换模型时重复加载 ASR 与视觉编码器。
-- 数据集在初始化时整表读入内存。
-
-具体计划见 [development.md](development.md#后续计划)。
+- 续训不再额外写 `checkpoints/<weight>.pth`，推理权重只在 `--save_dir` 中保存一份。
+- 加载权重时会打印缺失和多余的参数数量。
+- SwanLab 参数改为 `--use_swanlab` / `--swanlab_project`，旧参数仍可用。
+- Web 服务切换模型时不再重复加载编码器。

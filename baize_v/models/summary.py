@@ -1,5 +1,19 @@
 from ..train.dist import Logger
 
+# 编码器权重不随 checkpoint 保存，从预训练目录加载，缺失属于预期
+ENCODER_PREFIXES = ('audio_encoder.', 'vision_encoder.')
+
+
+def report_load_result(result, label='weights'):
+    """打印 load_state_dict(strict=False) 的缺失键与多余键，避免静默的随机初始化。"""
+    missing = [k for k in result.missing_keys if not k.startswith(ENCODER_PREFIXES)]
+    unexpected = list(result.unexpected_keys)
+    if missing:
+        Logger(f'[{label}] 缺失 {len(missing)} 个参数（将保持随机初始化），例如: {missing[:5]}')
+    if unexpected:
+        Logger(f'[{label}] 忽略 {len(unexpected)} 个多余参数，例如: {unexpected[:5]}')
+    return missing, unexpected
+
 
 def log_model_params(model, ignore_patterns=['audio_encoder', 'vision_encoder']):
     def should_count(n): return not any(p in n for p in ignore_patterns)

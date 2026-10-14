@@ -66,15 +66,23 @@ uv run ruff check baize_v tests scripts
 
 结构调整时可以用同一个 tiny 配置，在改动前后分别导出 `state_dict` 的键名和同种子下的前向输出，比较两者是否完全相同。这套方法已经用于本次迁移（96 个键、logits 逐元素一致）。
 
-## 后续计划
+## 重构与修复记录
 
-本次迁移只调整结构，没有改变训练和推理的行为。以下问题会改变 checkpoint 格式或数值结果，计划分开处理：
+以下事项已在本轮完成，并用固定种子比对模型输出与数据样本，确保行为不变或有意说明：
 
-1. **权重加载**：`load_state_dict(strict=False)` 时打印 missing / unexpected 键。
-2. **checkpoint 布局**：模型权重只保存一份；`--save_dir` 与 `checkpoints/` 统一。续训文件只存优化器、scaler 等状态。
-3. **性能**：去掉每次 forward 中的 `freqs_cos[0, 0] == 0` 检查（GPU 同步）；`BaizeOmni.forward` 中的 dummy gradient 改为更清晰的方式。
-4. **Web 应用**：切换模型时复用已加载的 SenseVoice 与 SigLIP，不重复读盘。
-5. **数据集**：避免整表读入内存，改为按需读取 parquet。
-6. **训练脚本**：`--use_wandb` 实际使用 SwanLab，参数名与日志名需统一；将 `torch.cuda.amp` 替换为 `torch.amp`。
-7. **Demo 去重**：Flask 与 Gradio 两个入口之间的 Mimi 解码、音色加载逻辑还有重复，可进一步合并到 `baize_v/inference/`。
-8. **生成逻辑**：`BaizeOmni.stream_generate` 约 80 行，可拆分为采样函数，保持 `model.generate` 接口不变。
+- 编码器加载、参数统计、音频 token 常量收拢到 `encoders.py` / `summary.py` / `tokens.py`。
+- Mimi 解码、HF 模型加载在 Web 与 Gradio 入口之间共用（`inference/mimi.py`、`inference/loader.py`）。
+- `evaluate.py` 拆分为每种模式一个函数；`OmniDataset.__getitem__` 拆分为多个私有方法，随机数调用顺序保持不变。
+- 注入逻辑移到 `models/fusion.py`，生成循环移到 `inference/generate.py`，`count_vision_proj` 改名为 `inject_vision_features`（保留旧名）。
+- 训练上下文改为 `TrainContext` dataclass；音色状态封装为 `VoiceRegistry`；实时 WebSocket 处理封装为 `RealtimeConnection`。
+- `load_state_dict(strict=False)` 的缺失键与多余键会打印。
+- 续训时不再额外写一份 `checkpoints/<w>.pth` 纯权重副本。
+- RoPE 缓冲区检查只在第一次 forward 时执行，避免每步 GPU 同步。
+- `torch.cuda.amp` 替换为 `torch.amp`；`--use_wandb` 统一为 `--use_swanlab`（旧名保留为别名）。
+- Web 服务切换模型时复用已加载的 SenseVoice / SigLIP 编码器（Gradio 示例同样处理）。
+
+## 暂不处理的事项
+
+- **Parquet 整表读入内存**：改为按需读取需要按 row group 解码。训练是随机采样，row group 缓存命中率低，每个样本都可能重新解码整个 row group，训练速度会明显下降。目前保留整表加载，每个进程一份内存。如果数据集超过内存，建议先用更小的 row group 切分数据，再评估按需读取的方案。
+- **`OmniConfig` 拆分**：配置字段会写入已导出的 `config.json`，拆分会影响旧模型加载，需要单独设计迁移方案。
+- **Gradio 示例的全局变量与长函数**：它只是示例入口，优先级低，暂未拆分。

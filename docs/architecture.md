@@ -7,37 +7,43 @@
 ```text
 baize-v/                        （仓库目录名沿用 minimind-o）
 ├── baize_v/                    核心 Python 包（发行名 baize-v，import 名 baize_v）
-│   ├── config.py               BaizeConfig / OmniConfig
+│   ├── config.py               BaizeConfig / OmniConfig（结构参数）
 │   ├── paths.py                项目路径常量，统一以仓库根为基准
+│   ├── tokens.py               音频 token 约定（pad / stop / spk / 词表大小）
 │   ├── models/                 网络结构
-│   │   ├── minimind.py         基础文本 LLM（Attention、MoE、Block、CausalLM）
+│   │   ├── llm.py              基础文本 LLM（Attention、MoE、Block、CausalLM）
 │   │   ├── talker.py           Talker（音频 codec 码本的自回归头）
 │   │   ├── projectors.py       音频 / 视觉 projector
-│   │   ├── encoders.py         SenseVoice 特征前端的包装
-│   │   └── omni.py             BaizeOmni：thinker + talker 的完整模型与生成逻辑
+│   │   ├── encoders.py         SenseVoice / SigLIP 的加载与特征前端包装
+│   │   ├── fusion.py           音频 / 视觉特征注入到文本 embedding 的占位区间
+│   │   ├── summary.py          参数量统计、load_state_dict 结果报告
+│   │   └── omni.py             BaizeOmni：thinker + talker 的完整模型
 │   ├── data/                   数据处理
 │   │   ├── dataset.py          OmniDataset（parquet → 训练样本）
 │   │   ├── chat.py             系统提示注入、思考块后处理
-│   │   ├── labels.py           文本 / 音频标签构造、scheduled sampling
+│   │   ├── labels.py           文本标签构造、scheduled sampling
 │   │   ├── augment.py          音频 / fbank 数据增强
 │   │   └── collate.py          batch 拼接
 │   ├── train/                  训练支撑
-│   │   ├── init.py             模型初始化、加载权重、冻结策略、参数统计
-│   │   ├── loop.py             单个 epoch 的训练循环
+│   │   ├── init.py             模型初始化、加载权重、冻结策略
+│   │   ├── loop.py             TrainContext 与单个 epoch 的训练循环
 │   │   ├── losses.py           文本 + 音频 loss
-│   │   ├── checkpoint.py       checkpoint 保存 / 续训读取
+│   │   ├── checkpoint.py       续训文件的保存 / 读取
 │   │   ├── schedule.py         学习率曲线、跳过已训 batch 的 sampler
 │   │   └── dist.py             分布式初始化、随机种子、日志
 │   └── inference/              推理支撑
+│       ├── generate.py         流式生成循环（文本 token + 8 层音频码）
+│       ├── mimi.py             Mimi 码本整理与解码（Web / Gradio / 评测共用）
 │       ├── realtime.py         Silero VAD 与实时会话状态机
-│       └── loader.py           扫描目录中的 transformers 模型
+│       └── loader.py           扫描 transformers 模型、加载 Omni 模型
 ├── scripts/                    命令行入口（薄封装，只做参数解析）
 │   ├── train_sft.py            SFT 训练
-│   ├── evaluate.py             离线评测（文本 / 语音 / 图像样例）
+│   ├── evaluate.py             离线评测（6 种模式，每种一个函数）
 │   ├── convert.py              PyTorch ⇄ transformers 权重互转
 │   └── recipes/                分阶段训练配方（mini / full_dense / full_moe）
 ├── apps/web/                   Web 应用（Flask + WebSocket，支持实时语音通话）
-│   ├── server.py
+│   ├── server.py               路由与 RealtimeConnection
+│   ├── voices.py               音色注册表（内置 / 未见 / 克隆）
 │   └── static/web_demo.html
 ├── examples/gradio_demo.py     Gradio 非实时示例
 ├── tests/                      pytest 测试
@@ -72,7 +78,7 @@ baize_v.train  ·  baize_v.inference  ·  baize_v.data
                   baize_v.config / baize_v.paths
 ```
 
-- `models/` 不依赖 `train/`、`data/`、`inference/`，可以单独用于推理或导出。
+- `models/` 不依赖 `train/`、`data/`、`inference/`，可以单独用于推理或导出。`inference/generate.py` 依赖 `models` 之外的任何模块，只接收模型对象。
 - `inference/realtime.py` 只依赖 `onnxruntime`，与模型解耦。
 - 入口脚本不包含业务逻辑，便于在 notebook 或其他服务中直接调用 `baize_v`。
 

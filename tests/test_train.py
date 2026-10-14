@@ -43,7 +43,8 @@ def test_checkpoint_roundtrip(tmp_path):
     model = BaizeOmni(cfg, audio_encoder_path=MISSING, vision_model_path=MISSING)
     opt = optim.AdamW(model.parameters(), lr=1e-4)
     omni_checkpoint(cfg, weight="t", model=model, optimizer=opt, epoch=1, step=5, save_dir=str(tmp_path))
-    assert os.path.exists(tmp_path / "t_64.pth") and os.path.exists(tmp_path / "t_64_resume.pth")
+    # 续训文件已包含完整模型权重，不再额外写一份纯权重副本
+    assert os.path.exists(tmp_path / "t_64_resume.pth") and not os.path.exists(tmp_path / "t_64.pth")
 
     data = omni_checkpoint(cfg, weight="t", save_dir=str(tmp_path))
     assert data["epoch"] == 1 and data["step"] == 5

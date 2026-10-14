@@ -23,7 +23,7 @@ class TrainContext:
     omni_config: Any
 
 
-def train_epoch(ctx: TrainContext, epoch, loader, iters, start_step=0, wandb=None):
+def train_epoch(ctx: TrainContext, epoch, loader, iters, start_step=0, tracker=None):
     args, model, optimizer, scaler, autocast_ctx, omni_config = ctx.args, ctx.model, ctx.optimizer, ctx.scaler, ctx.autocast_ctx, ctx.omni_config
     start_time = time.time()
     for step, (input_ids, labels, audio_labels, audio_inputs, audio_lens, pixel_values, spk_emb) in enumerate(loader, start=start_step + 1):
@@ -65,8 +65,8 @@ def train_epoch(ctx: TrainContext, epoch, loader, iters, start_step=0, wandb=Non
             current_lr = optimizer.param_groups[-1]['lr']
             eta_min = spend_time / max(step - start_step, 1) * (iters - step) // 60
             Logger(f'Epoch:[{epoch+1}/{args.epochs}]({step}/{iters}), loss: {current_loss:.4f}, text: {text_loss_val:.4f}, audio: {audio_loss_val:.4f}, lr: {current_lr:.8f}, epoch_time: {eta_min:.1f}min')
-            if wandb: 
-                wandb.log({"loss": current_loss, "text_loss": text_loss_val, 
+            if tracker:
+                tracker.log({"loss": current_loss, "text_loss": text_loss_val, 
                           "audio_loss": audio_loss_val, "lr": current_lr, "epoch_time": eta_min})
 
         if (step % args.save_interval == 0 or step == iters) and is_main_process():
@@ -78,7 +78,7 @@ def train_epoch(ctx: TrainContext, epoch, loader, iters, start_step=0, wandb=Non
             clean_state_dict = {k: v for k, v in raw_model.state_dict().items() if not k.startswith('audio_encoder.')}
             torch.save({k: v.half().cpu() for k, v in clean_state_dict.items()}, ckp)
             omni_checkpoint(omni_config, weight=args.save_weight, model=model, optimizer=optimizer, 
-                          epoch=epoch, step=step, wandb=wandb, save_dir=CHECKPOINT_DIR, scaler=scaler)
+                          epoch=epoch, step=step, tracker=tracker, save_dir=CHECKPOINT_DIR, scaler=scaler)
             model.train()
 
         del input_ids, labels, audio_labels, audio_inputs, audio_lens, pixel_values, spk_emb, res, loss

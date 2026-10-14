@@ -176,12 +176,19 @@ def run_generate(x, audio_inputs, audio_lens, pixel_values, **kw):
             x, M['tokenizer'].eos_token_id, stream=True, return_audio_codes=True,
             audio_inputs=audio_inputs, audio_lens=audio_lens, pixel_values=pixel_values, **kw)
 
+def _shared_encoders():
+    """SenseVoice 与 SigLIP 是冻结的编码器，只加载一次，切换模型时复用。"""
+    if 'encoders' not in M:
+        M['encoders'] = (load_sensevoice(SENSEVOICE_DIR), load_vision(SIGLIP_DIR))
+    return M['encoders']
+
 def load_main_model(model_path, model_name):
     with MODEL_LOCK:
         clear_remote_code_cache()
         M.pop('model', None); M.pop('tokenizer', None)
         if torch.cuda.is_available(): torch.cuda.empty_cache()
-        tok, m = load_hf_model(model_path, M['device'], audio=load_sensevoice(SENSEVOICE_DIR), vision=load_vision(SIGLIP_DIR))
+        audio, vision = _shared_encoders()
+        tok, m = load_hf_model(model_path, M['device'], audio=audio, vision=vision)
         M['tokenizer'], M['model'], M['model_name'] = tok, m, model_name
         params = sum(p.numel() for p in m.parameters()) / 1e6
         print(f'Loaded model: {model_name} ({params:.2f}M)')

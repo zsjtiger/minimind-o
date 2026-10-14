@@ -5,6 +5,7 @@ from transformers import AutoTokenizer
 from ..models.omni import BaizeOmni
 from ..paths import TOKENIZER_DIR, SENSEVOICE_DIR, SIGLIP_DIR, OUT_DIR
 from .dist import Logger
+from ..models.summary import report_load_result
 
 
 def init_omni_model(omni_config, from_weight='full_sft', tokenizer_path=TOKENIZER_DIR, audio_encoder_path=SENSEVOICE_DIR, vision_model_path=SIGLIP_DIR, save_dir=OUT_DIR, device='cuda', freeze_backbone='none', from_resume=0):
@@ -21,7 +22,7 @@ def init_omni_model(omni_config, from_weight='full_sft', tokenizer_path=TOKENIZE
             if incompatible:
                 Logger(f'跳过shape不匹配的权重: {incompatible}')
                 weights = {k: v for k, v in weights.items() if k not in incompatible}
-            model.load_state_dict(weights, strict=False)
+            report_load_result(model.load_state_dict(weights, strict=False), label=os.path.basename(weight_path))
             Logger(f'已加载权重: {weight_path}')
             if from_resume == 0 and omni_config.talker_hidden_size == omni_config.hidden_size:
                 n_talker = omni_config.num_talker_hidden_layers

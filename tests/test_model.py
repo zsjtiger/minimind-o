@@ -46,3 +46,12 @@ def test_legacy_names_are_aliases():
     from baize_v.models.llm import BaizeModel, MiniMindModel
     assert omni.MiniMindOmni is omni.BaizeOmni
     assert MiniMindModel is BaizeModel
+
+
+def test_report_load_result_ignores_encoder_keys(tiny_model):
+    from baize_v.models.summary import report_load_result
+    state = {k: v for k, v in tiny_model.state_dict().items() if not k.startswith('talker.')}
+    state['not_a_real_key'] = torch.zeros(1)
+    missing, unexpected = report_load_result(tiny_model.load_state_dict(state, strict=False), label='test')
+    assert missing and all(k.startswith('talker.') for k in missing)
+    assert unexpected == ['not_a_real_key']

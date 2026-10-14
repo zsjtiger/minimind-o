@@ -80,11 +80,23 @@ def decode_mimi(mimi_codes):
     return decode_codes(mimi_model, filtered).astype(np.float32)
 
 
+_encoders_cache = {}
+
+
+def _shared_encoders():
+    """SenseVoice 与 SigLIP 是冻结的编码器，只加载一次，切换模型时复用。"""
+    if not _encoders_cache:
+        _encoders_cache['audio'] = load_sensevoice(args.audio_encoder)
+        _encoders_cache['vision'] = load_vision(args.vision_model)
+    return _encoders_cache['audio'], _encoders_cache['vision']
+
+
 def load_hf_model_into_globals(model_path):
     global model, tokenizer
     with model_lock:
         clear_remote_code_cache()
-        tokenizer, model = load_hf_model(model_path, device, audio=load_sensevoice(args.audio_encoder), vision=load_vision(args.vision_model))
+        audio, vision = _shared_encoders()
+        tokenizer, model = load_hf_model(model_path, device, audio=audio, vision=vision)
         name = os.path.basename(model_path)
         params = sum(p.numel() for p in model.parameters()) / 1e6
         print(f'已加载 {name}，参数量：{params:.2f}M')
