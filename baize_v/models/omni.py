@@ -1,12 +1,12 @@
 import torch
-import torch.nn.functional as F
 from transformers.modeling_outputs import MoeCausalLMOutputWithPast
 from ..config import OmniConfig
 from .llm import BaizeForCausalLM, MOEFeedForward, precompute_freqs_cis
 from .projectors import MMAudioProjector, MMVisionProjector
 from .talker import TalkerModule
 from .encoders import load_sensevoice, load_vision
-from ..tokens import MIMI_CODEBOOK_SIZE
+from ..inference.generate import stream_generate as stream_generate_tokens
+from .fusion import inject_audio_features as inject_audio, inject_vision_features as inject_vision
 from ..paths import SENSEVOICE_DIR, SIGLIP_DIR
 
 
@@ -57,25 +57,8 @@ class BaizeOmni(BaizeForCausalLM):
     def inject_audio_features(self, tokens, h, audio_feats, seqlen):
         if audio_feats is None or not self.config.audio_ids:
             return h
-        marker = self.config.audio_ids[0]
-        out = []
-        for b in range(h.size(0)):
-            hb, seq, i = h[b], tokens[b].tolist(), 0
-            af = audio_feats[b] if audio_feats[b] is not None else None
-            while i < len(seq):
-                if seq[i] == marker:
-                    start = i
-                    while i < len(seq) and seq[i] == marker:
-                        i += 1
-                    if af is not None:
-                        inject_len = min(af.size(0), i - start)
-                        hb = torch.cat((hb[:start], af[:inject_len], hb[start + inject_len:]), dim=0)
-                        af = None
-                else:
-                    i += 1
-            out.append(hb)
-        return torch.stack(out)
-    
+        return inject_audio(tokens, h, audio_feats, self.config.audio_ids[0])
+
     load_vision = staticmethod(load_vision)
 
     @torch.compiler.disable
@@ -103,27 +86,12 @@ class BaizeOmni(BaizeForCausalLM):
         return emb.new_zeros(pixel_values.size(0), *emb.shape[1:]).scatter(0, idx, emb)
 
     @torch.compiler.disable
-    def count_vision_proj(self, tokens, h, vision_tensors=None, seqlen=512):
+    def inject_vision_features(self, tokens, h, vision_tensors=None, seqlen=512):
         if vision_tensors is None or not self.config.image_ids:
             return h
-        marker, vf = self.config.image_ids[0], vision_tensors
-        if vf.dim() == 3:
-            vf = vf.unsqueeze(1)
-        out = []
-        for b in range(h.size(0)):
-            hb, seq, k, i = h[b], tokens[b].tolist(), 0, 0
-            while i < len(seq):
-                if seq[i] == marker:
-                    start = i
-                    while i < len(seq) and seq[i] == marker:
-                        i += 1
-                    if k < vf.size(1):
-                        hb = torch.cat((hb[:start], vf[b][k][:i - start], hb[i:]), dim=0)[:seqlen]
-                        k += 1
-                else:
-                    i += 1
-            out.append(hb)
-        return torch.stack(out)
+        return inject_vision(tokens, h, vision_tensors, self.config.image_ids[0], seqlen)
+
+    count_vision_proj = inject_vision_features  # 旧名称
 
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, logits_to_keep=0, audio_inputs=None, audio_lens=None, pixel_values=None, **args):
         if len(input_ids.shape) == 2:
@@ -167,7 +135,7 @@ class BaizeOmni(BaizeForCausalLM):
                     self.encode_image_inputs(pixel_values[:, i, :, :, :])
                     for i in range(num)
                 ], dim=stack_dim)
-            hidden_states = self.count_vision_proj(tokens=text_ids, h=hidden_states, vision_tensors=vision_tensors, seqlen=seq_length)
+            hidden_states = self.inject_vision_features(tokens=text_ids, h=hidden_states, vision_tensors=vision_tensors, seqlen=seq_length)
         bridge_states = hidden_states
         for i, (layer, past_key_value) in enumerate(zip(self.thinker.layers, past_key_values[:n_thinker])):
             hidden_states, present = layer(hidden_states, position_embeddings, past_key_value=past_key_value, use_cache=use_cache, attention_mask=attention_mask)
@@ -207,75 +175,8 @@ class BaizeOmni(BaizeForCausalLM):
         return tokens[-1] if tokens else input_ids
 
     def stream_generate(self, input_ids, eos_token_id, max_new_tokens, temperature, top_p, rp, use_cache, return_audio_codes=False, **args):
-        start_pos, past_kvs, text_finished, first_finished = input_ids.shape[1], None, False, True
-        audio_codes = [[] for _ in range(8)]
-        audio_stop_pos = [None] * 8
-        audio_buffer = torch.full((1, 8, start_pos), self.audio_pad_token, dtype=torch.long, device=input_ids.device)
-        spk_emb = args.get('spk_emb', None)
-        ref_codes = args.get('ref_codes', None)
-        ref_len = ref_codes.shape[2] if ref_codes is not None else 0
-        spk_reserve = 1 if spk_emb is not None else 0
-        fill_end = start_pos
-        fill_start = max(spk_reserve, start_pos - ref_len)
-        if ref_codes is not None and fill_start < fill_end:
-            audio_buffer[:, :, fill_start:fill_end] = ref_codes[:, :, -(fill_end - fill_start):]
-        if spk_emb is not None and fill_start > 0:
-            audio_buffer[:, :, fill_start - 1] = self.audio_spk_token
-        think_end_step, generated_tokens = None, ([] if args.get('open_thinking', False) else None)
-        while input_ids.shape[1] < start_pos + max_new_tokens:
-            if past_kvs is None or not use_cache:
-                out = self.forward(torch.cat((audio_buffer, input_ids.unsqueeze(1)), dim=1), past_key_values=past_kvs, use_cache=use_cache, **args)
-            else:
-                out = self.forward(torch.cat((audio_buffer[:, :, -1:], input_ids[:, -1:].unsqueeze(1)), dim=1), past_key_values=past_kvs, use_cache=use_cache, **args)
-            past_kvs = out.past_key_values
+        return stream_generate_tokens(self, input_ids, eos_token_id, max_new_tokens, temperature, top_p, rp, use_cache, return_audio_codes, **args)
 
-            logits = out.logits[0, -1, :].clone() / (temperature + 1e-9)
-            if rp != 1.0:
-                seen = list(set(input_ids[0].tolist())); score = logits[seen]; logits[seen] = torch.where(score > 0, score / rp, score * rp)
-            if top_p and top_p < 1.0:
-                sorted_l, sorted_i = torch.sort(logits, descending=True)
-                mask = torch.cumsum(F.softmax(sorted_l, dim=-1), dim=-1) > top_p
-                mask[1:], mask[0] = mask[:-1].clone(), False
-                logits[sorted_i[mask]] = -float('Inf')
-            text_token = torch.multinomial(F.softmax(logits, dim=-1), 1).item()
-
-            if text_finished:
-                text_token = args.get('enter_token_id', 201) if first_finished else args.get('pad_token_id', 0)
-                first_finished = False
-
-            step = input_ids.shape[1] - start_pos  # 已生成token数（0=首次，此时模型处理prompt末尾token）
-            audio_step = step - 1  # 延迟1步：输出第1个text时无audio，输出第2个text时layer0开始
-            if generated_tokens is not None:
-                generated_tokens.append(text_token)
-                if not think_end_step and generated_tokens[-len(self.config.think_end_ids):] == list(self.config.think_end_ids): think_end_step = step + 2
-                audio_step = (step - think_end_step) if think_end_step else -1
-            for i, al in enumerate(out.audio_logits):
-                if audio_step < i:
-                    audio_codes[i].append(self.audio_pad_token)
-                else:
-                    logits_i = al[0, -1, :].clone() / 0.2
-                    for prev_code in audio_codes[i][-3:]: score = logits_i[prev_code]; logits_i[prev_code] = torch.where(score > 0, score / 1.05, score * 1.05)
-                    top_val, top_idx = logits_i.topk(50)
-                    code = top_idx[torch.multinomial(F.softmax(top_val, dim=-1), 1)].item()
-                    audio_codes[i].append(code)
-                    if audio_stop_pos[i] is None and code >= MIMI_CODEBOOK_SIZE: audio_stop_pos[i] = len(audio_codes[i]) - 1
-
-            if text_finished and all(audio_stop_pos[i] is not None for i in range(8)): break
-
-            input_ids = torch.cat((input_ids, torch.tensor([[text_token]], device=input_ids.device)), dim=1)
-            audio_buffer = torch.cat((audio_buffer, torch.full((1, 8, 1), self.audio_pad_token, dtype=torch.long, device=input_ids.device)), dim=2)
-            for i in range(min(audio_step + 1, 8)): audio_buffer[0, i, -1] = audio_codes[i][-1]
-
-            audio_frame = None
-            if return_audio_codes and audio_step >= 7:
-                frame = [audio_codes[i][step - 7 + i] for i in range(8)]
-                active_layers = sum(1 for i in range(8) if audio_stop_pos[i] is None or step - 7 + i < audio_stop_pos[i])
-                if active_layers >= 8: audio_frame = frame
-            if not text_finished:
-                yield input_ids[:, start_pos:], audio_frame
-                if text_token == eos_token_id: text_finished = True
-            else:
-                yield None, audio_frame
 
 
 # 旧名称兼容：MiniMindOmni 已更名为 BaizeOmni

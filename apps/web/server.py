@@ -11,6 +11,7 @@ from baize_v.inference.loader import scan_hf_models, load_hf_model, clear_remote
 from baize_v.inference.mimi import frames_to_codes, mask_special, decode_codes
 from baize_v.models.encoders import load_sensevoice, load_vision
 from baize_v.models.summary import log_model_params
+from voices import VoiceRegistry
 from baize_v.paths import SENSEVOICE_DIR, SIGLIP_DIR, MIMI_DIR, CAMPPLUS_DIR, SPEAKER_DIR, VAD_PATH
 from baize_v.tokens import AUDIO_PAD_TOKEN
 logging.getLogger().setLevel(logging.ERROR)
@@ -23,8 +24,7 @@ app = Flask(__name__, static_folder=STATIC_DIR)
 CORS(app)
 sock = Sock(app)
 M = {}  # model / tokenizer / device / mimi / asr / cfg
-V = {}  # voice_name -> {ref_codes, spk_emb}
-V_builtin, V_unseen, V_manual = [], [], []
+VOICES = VoiceRegistry()
 MODEL_LOCK = threading.Lock()
 SAMPLES_PER_FRAME = 1920
 REF_FRAMES = 300
@@ -87,8 +87,8 @@ def stream_pcm(frames, flush=False):
             if p: yield p
 
 def voice_args(name):
-    if name and name != 'default' and name in V:
-        v = V[name]
+    if name and name != 'default' and name in VOICES:
+        v = VOICES[name]
         dev = M['device']
         rc = v['ref_codes'].unsqueeze(0).to(dev)
         se = v['spk_emb'].half().unsqueeze(0).to(dev) if 'spk_emb' in v else None
@@ -96,29 +96,20 @@ def voice_args(name):
     return {}
 
 def register_voice(name, value, group='manual'):
-    V[name] = value
-    groups = {'builtin': V_builtin, 'unseen': V_unseen, 'manual': V_manual}
-    dst = groups[group]
-    if name not in dst:
-        dst.append(name)
-    for k, lst in groups.items():
-        if k != group and name in lst:
-            lst.remove(name)
+    VOICES.register(name, value, group)
 
 def clone_voice_path():
     return os.path.join(SPEAKER_DIR, CLONE_FILE)
 
 def delete_manual_voice(name):
-    if name not in V_manual:
+    if not VOICES.in_group(name, 'manual'):
         raise RuntimeError('只能删除手动克隆的音色')
     out_path = clone_voice_path()
     saved = torch.load(out_path, map_location='cpu') if os.path.exists(out_path) else {}
     if name in saved:
         saved.pop(name)
         torch.save(saved, out_path)
-    V.pop(name, None)
-    if name in V_manual:
-        V_manual.remove(name)
+    VOICES.remove_manual(name)
 
 def normalize_voice_name(name):
     name = ' '.join(str(name or '').split())
@@ -128,7 +119,7 @@ def normalize_voice_name(name):
         raise RuntimeError('音色名太长，建议控制在 24 个字以内')
     if name.lower() == 'default':
         raise RuntimeError('default 是保留名称，请换一个')
-    if name in V_builtin or name in V_unseen:
+    if VOICES.in_group(name, 'builtin') or VOICES.in_group(name, 'unseen'):
         raise RuntimeError('该名称已被现有音色占用，请换一个')
     return name
 
@@ -227,7 +218,7 @@ def call_page(): return send_from_directory(STATIC_DIR, 'web_demo.html')
 
 @app.route('/voices')
 def get_voices():
-    return json.dumps({'builtin': sorted(V_builtin), 'unseen': sorted(V_unseen), 'manual': sorted(V_manual)})
+    return json.dumps(VOICES.summary())
 
 @app.route('/models')
 def get_models():
@@ -485,9 +476,9 @@ def init_model(args):
         fp = os.path.join(spk_dir, fn)
         if os.path.exists(fp):
             for speaker, v in torch.load(fp, map_location=args.device).items():
-                if speaker not in V or fn == CLONE_FILE:
+                if speaker not in VOICES or fn == CLONE_FILE:
                     register_voice(speaker, v, group=group)
-    if V: print(f'Loaded {len(V)} voices: builtin={sorted(V_builtin)}, unseen={sorted(V_unseen)}, manual={sorted(V_manual)}')
+    if len(VOICES): print(f'Loaded {len(VOICES)} voices: {VOICES.describe()}')
     log_model_params(M['model'])
     print('Warmup...')
     with torch.no_grad():

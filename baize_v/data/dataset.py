@@ -23,10 +23,6 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 class OmniDataset(Dataset):
     def __init__(self, data_path, tokenizer, audio_processor=None, vision_processor=None,
                  max_length=1200, audio_special_token='<|audio_pad|>', image_special_token='<|image_pad|>',
-                 audio_stop_token=AUDIO_STOP_TOKEN,
-                 audio_pad_token=AUDIO_PAD_TOKEN,
-                 audio_spk_token=AUDIO_SPK_TOKEN,
-                 audio_vocab_size=AUDIO_VOCAB_SIZE,
                  scheduled_sampling=0.05,
                  image_token_len=64):
         super().__init__()
@@ -40,10 +36,10 @@ class OmniDataset(Dataset):
         self.audio_token = audio_special_token
         self.image_token_len = image_token_len
         self.image_token = image_special_token * image_token_len
-        self.audio_stop_token = audio_stop_token
-        self.audio_pad_token = audio_pad_token
-        self.audio_spk_token = audio_spk_token
-        self.audio_vocab_size = audio_vocab_size
+        self.audio_stop_token = AUDIO_STOP_TOKEN
+        self.audio_pad_token = AUDIO_PAD_TOKEN
+        self.audio_spk_token = AUDIO_SPK_TOKEN
+        self.audio_vocab_size = AUDIO_VOCAB_SIZE
         self.scheduled_sampling_prob = scheduled_sampling
         self.text_vocab_size = len(tokenizer)
         self.image_token_id = tokenizer.encode(image_special_token, add_special_tokens=False)[0]

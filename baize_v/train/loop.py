@@ -1,4 +1,7 @@
 import time
+from dataclasses import dataclass
+from typing import Any
+
 import torch
 from torch.nn.parallel import DistributedDataParallel
 
@@ -9,7 +12,18 @@ from .checkpoint import omni_checkpoint
 from .losses import compute_losses
 
 
-def train_epoch(ctx, epoch, loader, iters, start_step=0, wandb=None):
+@dataclass
+class TrainContext:
+    """一次训练运行的共享状态：参数、模型、优化器、混合精度相关对象。"""
+    args: Any
+    model: Any
+    optimizer: Any
+    scaler: Any
+    autocast_ctx: Any
+    omni_config: Any
+
+
+def train_epoch(ctx: TrainContext, epoch, loader, iters, start_step=0, wandb=None):
     args, model, optimizer, scaler, autocast_ctx, omni_config = ctx.args, ctx.model, ctx.optimizer, ctx.scaler, ctx.autocast_ctx, ctx.omni_config
     start_time = time.time()
     for step, (input_ids, labels, audio_labels, audio_inputs, audio_lens, pixel_values, spk_emb) in enumerate(loader, start=start_step + 1):

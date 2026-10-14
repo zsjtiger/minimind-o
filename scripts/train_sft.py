@@ -9,7 +9,6 @@
 import os
 import argparse
 import warnings
-from types import SimpleNamespace
 from contextlib import nullcontext
 
 import torch
@@ -20,7 +19,7 @@ from torch.nn.parallel import DistributedDataParallel
 
 from baize_v.config import OmniConfig
 from baize_v.data import OmniDataset, omni_collate_fn
-from baize_v.train.loop import train_epoch
+from baize_v.train.loop import train_epoch, TrainContext
 from baize_v.train.dist import is_main_process, init_distributed_mode, setup_seed, Logger
 from baize_v.train.init import init_omni_model
 from baize_v.models.summary import log_model_params
@@ -141,7 +140,7 @@ if __name__ == "__main__":
         model = DistributedDataParallel(model, device_ids=[local_rank])
     
     # ========== 8. 开始训练 ==========
-    ctx = SimpleNamespace(args=args, model=model, optimizer=optimizer, scaler=scaler, autocast_ctx=autocast_ctx, omni_config=omni_config)
+    ctx = TrainContext(args=args, model=model, optimizer=optimizer, scaler=scaler, autocast_ctx=autocast_ctx, omni_config=omni_config)
     for epoch in range(start_epoch, args.epochs):
         train_sampler and train_sampler.set_epoch(epoch)
         setup_seed(42 + epoch); indices = torch.randperm(len(train_ds)).tolist()
