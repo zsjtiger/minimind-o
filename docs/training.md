@@ -3,7 +3,7 @@
 训练入口是 `scripts/train_sft.py`，配方脚本位于 `scripts/recipes/`。所有命令都在仓库根目录执行。
 
 ```bash
-pip install -e .
+uv sync
 bash scripts/recipes/mini.sh          # 单卡 mini 数据集
 ```
 
@@ -35,7 +35,7 @@ bash scripts/recipes/mini.sh          # 单卡 mini 数据集
 | `--use_moe` | `0` | 设为 `1` 使用 MoE 架构 |
 | `--use_wandb` | 关 | 启用 SwanLab 记录（项目名 `--wandb_project`） |
 
-运行 `python scripts/train_sft.py --help` 查看全部参数。
+运行 `uv run python scripts/train_sft.py --help` 查看全部参数。
 
 ## 续训
 

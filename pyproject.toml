@@ -28,14 +28,17 @@ dependencies = [
     "flask-sock==0.7.0",
     "pydub==0.25.1",
     "numpy==1.26.4",
-    "Pillow==9.5.0",
+    "Pillow==10.4.0",
     "swanlab==0.7.11",
     "modelscope==1.37.0",
 ]
 
-[project.optional-dependencies]
-demo = ["gradio==5.49.1"]
+[dependency-groups]
 dev = ["pytest", "pyflakes", "ruff"]
+demo = ["gradio==5.49.1"]
+
+[tool.uv]
+default-groups = ["dev"]
 
 [tool.setuptools.packages.find]
 include = ["baize_v*"]

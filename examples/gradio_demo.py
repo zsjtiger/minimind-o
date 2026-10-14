@@ -1,6 +1,6 @@
 """Gradio 版 Demo（示例）。主推的 Web 应用见 apps/web/server.py。
 
-用法（仓库根目录，已 pip install -e .）：python examples/gradio_demo.py
+用法（仓库根目录，已执行 uv sync）：uv run python examples/gradio_demo.py
 """
 import os
 import sys

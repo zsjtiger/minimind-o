@@ -2,20 +2,31 @@
 
 ## 环境
 
-- Python 3.10–3.12（`pydub` 依赖的 `audioop` 在 3.13 中已移除，因此不支持 3.13）。
-- 先按 PyTorch 官网安装与本机 CUDA 匹配的 `torch` / `torchaudio`，再安装项目依赖：
+项目使用 [uv](https://docs.astral.sh/uv/) 管理 Python 版本、虚拟环境和依赖。
+
+- Python 版本由 `.python-version` 固定为 3.12；`pydub` 依赖的 `audioop` 在 3.13 中已移除，因此不支持 3.13。
+- 依赖声明在 `pyproject.toml`，完整的解析结果在 `uv.lock`，修改依赖后请运行 `uv lock` 并一并提交。
 
 ```bash
-pip install -r requirements.txt
-pip install -e ".[dev]"          # 可编辑安装 baize-v，并安装 pytest / pyflakes / ruff
-pip install -e ".[demo]"         # 可选：Gradio 示例
+uv sync                          # 创建 .venv，安装依赖（默认包含 dev 组：pytest / pyflakes / ruff）
+uv sync --group demo             # 额外安装 Gradio 示例所需依赖
+uv run python -c "import baize_v; print(baize_v.__version__)"
 ```
+
+依赖组：
+
+| 组 | 内容 | 默认安装 |
+| --- | --- | --- |
+| `dev` | pytest、pyflakes、ruff | 是 |
+| `demo` | gradio | 否 |
+
+所有命令都通过 `uv run` 执行，无需手动激活虚拟环境。
 
 ## 测试
 
 ```bash
-pytest                           # 全部测试
-pytest tests/test_model.py -q    # 单个文件
+uv run pytest                   # 全部测试
+uv run pytest tests/test_model.py -q    # 单个文件
 ```
 
 测试不依赖外部预训练权重，全部使用 tiny 配置（hidden 64、2 层）和不存在的编码器路径。覆盖范围：
@@ -38,8 +49,8 @@ pytest tests/test_model.py -q    # 单个文件
 ## Lint
 
 ```bash
-python -m pyflakes baize_v scripts tests
-python -m ruff check baize_v tests scripts
+uv run python -m pyflakes baize_v scripts tests
+uv run ruff check baize_v tests scripts
 ```
 
 `ruff` 的规则在 `pyproject.toml` 的 `[tool.ruff.lint]` 中，目前只检查语法错误和 pyflakes 类问题。

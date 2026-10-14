@@ -1,8 +1,8 @@
 """MiniMind-O SFT 训练入口。
 
-用法（仓库根目录，已 ``pip install -e .``）::
+用法（仓库根目录，已执行 ``uv sync``）::
 
-    python scripts/train_sft.py --data_path dataset/sft_a2a_mini.parquet --from_weight llm
+    uv run python scripts/train_sft.py --data_path dataset/sft_a2a_mini.parquet --from_weight llm
 
 完整配方见 docs/training.md 与 scripts/recipes/。
 """

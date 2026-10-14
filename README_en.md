@@ -108,8 +108,8 @@ MiniMind-O attempts to fill this gap: speech and text are connected directly at 
 * GPU: NVIDIA GeForce RTX 3090 (24GB) * 8
 * Ubuntu==20.04
 * CUDA==12.2
-* Python==3.10
-* [requirements.txt](./requirements.txt)
+* Python==3.12 (pinned by `.python-version`)
+* [pyproject.toml](./pyproject.toml) / [uv.lock](./uv.lock)
 
 </details>
 
@@ -122,10 +122,14 @@ MiniMind-O attempts to fill this gap: speech and text are connected directly at 
 ```bash
 # Clone the repository
 git clone --depth 1 https://github.com/jingyaogong/minimind-o
-# Install dependencies
-pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
-# Install the baize_v package in editable mode (scripts import `baize_v`)
-pip install -e .
+# Install uv (official installer; see https://docs.astral.sh/uv/getting-started/installation/)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# Sync dependencies from uv.lock; creates .venv and installs baize_v in editable mode
+uv sync
+# Optional: add the demo group for the Gradio example
+uv sync --group demo
+# Optional: use a China mirror
+UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple uv sync
 ```
 
 ### 2' Download resources
@@ -172,24 +176,24 @@ modelscope download --model gongjy/minimind-3o-pytorch --local_dir ./out
 ### 2' Command-line chat
 
 ```bash
-python scripts/evaluate.py --load_from torch --weight sft_omni
+uv run python scripts/evaluate.py --load_from torch --weight sft_omni
 ```
 
 To use the Transformers-format model, download the model directory first:
 
 ```bash
 git clone https://huggingface.co/jingyaogong/minimind-3o out/minimind-3o
-python scripts/evaluate.py --load_from out/minimind-3o
+uv run python scripts/evaluate.py --load_from out/minimind-3o
 ```
 
 ### 3' Launch WebUI (optional)
 
 ```bash
 # Put the Transformers-format model under ./out/ first (e.g. ./out/minimind-3o); the server scans this directory automatically
-python apps/web/server.py --load_from out
+uv run python apps/web/server.py --load_from out
 ```
 
-Note: `examples/gradio_demo.py` is the non-realtime Gradio demo (uploaded or recorded audio is resampled on the backend to 16 kHz); usage is the same: `python examples/gradio_demo.py --load_from out`. Use `apps/web/server.py` for realtime voice calls.
+Note: `examples/gradio_demo.py` is the non-realtime Gradio demo (uploaded or recorded audio is resampled on the backend to 16 kHz); usage is the same: `uv run python examples/gradio_demo.py --load_from out`. Use `apps/web/server.py` for realtime voice calls.
 
 ## Ⅱ 🛠️ Training
 
@@ -214,9 +218,9 @@ For a quick start, downloading only the `_mini` parquet files from the [dataset 
 The recommended mini training pipeline is shown below. Run it from the repository root; equivalently, `bash scripts/recipes/mini.sh`:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 scripts/train_sft.py --learning_rate 5e-4 --data_path dataset/sft_t2a_mini.parquet --epochs 1 --batch_size 40 --use_compile 1 --from_weight llm --save_weight sft_zero --max_seq_len 512 --use_wandb --use_moe 0
-CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 scripts/train_sft.py --learning_rate 5e-4 --data_path dataset/sft_a2a_mini.parquet --epochs 1 --batch_size 40 --use_compile 0 --from_weight sft_zero --save_weight sft_zero --max_seq_len 640 --mode audio_proj --use_wandb --use_moe 0
-CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 scripts/train_sft.py --learning_rate 2e-5 --data_path dataset/sft_a2a_mini.parquet --epochs 1 --batch_size 16 --use_compile 0 --from_weight sft_zero --save_weight sft_zero --max_seq_len 768 --use_wandb --use_moe 0
+CUDA_VISIBLE_DEVICES=0 uv run torchrun --master_port 29560 --nproc_per_node 1 scripts/train_sft.py --learning_rate 5e-4 --data_path dataset/sft_t2a_mini.parquet --epochs 1 --batch_size 40 --use_compile 1 --from_weight llm --save_weight sft_zero --max_seq_len 512 --use_wandb --use_moe 0
+CUDA_VISIBLE_DEVICES=0 uv run torchrun --master_port 29560 --nproc_per_node 1 scripts/train_sft.py --learning_rate 5e-4 --data_path dataset/sft_a2a_mini.parquet --epochs 1 --batch_size 40 --use_compile 0 --from_weight sft_zero --save_weight sft_zero --max_seq_len 640 --mode audio_proj --use_wandb --use_moe 0
+CUDA_VISIBLE_DEVICES=0 uv run torchrun --master_port 29560 --nproc_per_node 1 scripts/train_sft.py --learning_rate 2e-5 --data_path dataset/sft_a2a_mini.parquet --epochs 1 --batch_size 16 --use_compile 0 --from_weight sft_zero --save_weight sft_zero --max_seq_len 768 --use_wandb --use_moe 0
 ```
 
 ### 3' Test the trained model (optional)
@@ -224,7 +228,7 @@ CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 scripts/t
 Make sure the model `*.pth` to be tested is placed under `./out/`.
 
 ```bash
-python scripts/evaluate.py --weight sft_omni
+uv run python scripts/evaluate.py --weight sft_omni
 ```
 
 # 📌 Model Details

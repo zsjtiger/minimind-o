@@ -109,8 +109,8 @@ MiniMind-O 尝试补上已知的空位：让语音和文本在 hidden state 层�
 * GPU: NVIDIA GeForce RTX 3090(24GB) * 8
 * Ubuntu==20.04
 * CUDA==12.2
-* Python==3.10
-* [requirements.txt](./requirements.txt)
+* Python==3.12（由 `.python-version` 指定）
+* [pyproject.toml](./pyproject.toml) / [uv.lock](./uv.lock)
 
 </details>
 
@@ -123,10 +123,14 @@ MiniMind-O 尝试补上已知的空位：让语音和文本在 hidden state 层�
 ```bash
 # 克隆仓库代码
 git clone --depth 1 https://github.com/jingyaogong/minimind-o
-# 安装必要依赖
-pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
-# 以可编辑模式安装 baize_v 包（脚本通过 `from baize_v import ...` 引用）
-pip install -e .
+# 安装 uv（官方安装脚本，也可参考 https://docs.astral.sh/uv/getting-started/installation/）
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# 按 uv.lock 同步依赖，自动创建 .venv 并以可编辑模式安装 baize_v 包
+uv sync
+# 需要 Gradio 示例时额外安装 demo 组
+uv sync --group demo
+# 国内镜像（可选）
+UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple uv sync
 ```
 
 ### 2' 下载资源
@@ -173,24 +177,24 @@ modelscope download --model gongjy/minimind-3o-pytorch --local_dir ./out
 ### 2' 命令行问答
 
 ```bash
-python scripts/evaluate.py --load_from torch --weight sft_omni
+uv run python scripts/evaluate.py --load_from torch --weight sft_omni
 ```
 
 如果使用 transformers 格式模型，可先下载模型目录：
 
 ```bash
 git clone https://huggingface.co/jingyaogong/minimind-3o out/minimind-3o
-python scripts/evaluate.py --load_from out/minimind-3o
+uv run python scripts/evaluate.py --load_from out/minimind-3o
 ```
 
 ### 3' 启动 WebUI（可选）
 
 ```bash
 # 先把 transformers 格式模型放到 ./out/ 下（如 ./out/minimind-3o），服务会自动扫描该目录
-python apps/web/server.py --load_from out
+uv run python apps/web/server.py --load_from out
 ```
 
-注：`examples/gradio_demo.py` 是 Gradio 非实时演示（上传/录音音频在后端按实际采样率重采样到 16k），用法相同：`python examples/gradio_demo.py --load_from out`。实时语音通话请使用 `apps/web/server.py`。
+注：`examples/gradio_demo.py` 是 Gradio 非实时演示（上传/录音音频在后端按实际采样率重采样到 16k），用法相同：`uv run python examples/gradio_demo.py --load_from out`。实时语音通话请使用 `apps/web/server.py`。
 
 ## Ⅱ 🛠️ 模型训练
 
@@ -215,9 +219,9 @@ print(torch.cuda.is_available())
 推荐 mini 训练管线如下，默认在仓库根目录执行，也可直接 `bash scripts/recipes/mini.sh`：
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 scripts/train_sft.py --learning_rate 5e-4 --data_path dataset/sft_t2a_mini.parquet --epochs 1 --batch_size 40 --use_compile 1 --from_weight llm --save_weight sft_zero --max_seq_len 512 --use_wandb --use_moe 0
-CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 scripts/train_sft.py --learning_rate 5e-4 --data_path dataset/sft_a2a_mini.parquet --epochs 1 --batch_size 40 --use_compile 0 --from_weight sft_zero --save_weight sft_zero --max_seq_len 640 --mode audio_proj --use_wandb --use_moe 0
-CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 scripts/train_sft.py --learning_rate 2e-5 --data_path dataset/sft_a2a_mini.parquet --epochs 1 --batch_size 16 --use_compile 0 --from_weight sft_zero --save_weight sft_zero --max_seq_len 768 --use_wandb --use_moe 0
+CUDA_VISIBLE_DEVICES=0 uv run torchrun --master_port 29560 --nproc_per_node 1 scripts/train_sft.py --learning_rate 5e-4 --data_path dataset/sft_t2a_mini.parquet --epochs 1 --batch_size 40 --use_compile 1 --from_weight llm --save_weight sft_zero --max_seq_len 512 --use_wandb --use_moe 0
+CUDA_VISIBLE_DEVICES=0 uv run torchrun --master_port 29560 --nproc_per_node 1 scripts/train_sft.py --learning_rate 5e-4 --data_path dataset/sft_a2a_mini.parquet --epochs 1 --batch_size 40 --use_compile 0 --from_weight sft_zero --save_weight sft_zero --max_seq_len 640 --mode audio_proj --use_wandb --use_moe 0
+CUDA_VISIBLE_DEVICES=0 uv run torchrun --master_port 29560 --nproc_per_node 1 scripts/train_sft.py --learning_rate 2e-5 --data_path dataset/sft_a2a_mini.parquet --epochs 1 --batch_size 16 --use_compile 0 --from_weight sft_zero --save_weight sft_zero --max_seq_len 768 --use_wandb --use_moe 0
 ```
 
 ### 3' 测试已训练模型（可选）
@@ -225,7 +229,7 @@ CUDA_VISIBLE_DEVICES=0 torchrun --master_port 29560 --nproc_per_node 1 scripts/t
 确保需要测试的模型 `*.pth` 文件已保存于 `./out/` 目录下。
 
 ```bash
-python scripts/evaluate.py --weight sft_omni
+uv run python scripts/evaluate.py --weight sft_omni
 ```
 
 # 📌 模型细节

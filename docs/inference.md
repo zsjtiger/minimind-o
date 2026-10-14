@@ -3,8 +3,8 @@
 ## 离线评测：`scripts/evaluate.py`
 
 ```bash
-python scripts/evaluate.py --load_from torch --weight sft_omni     # 原生 PyTorch 权重（out/sft_omni_768.pth）
-python scripts/evaluate.py --load_from out/minimind-3o             # transformers 格式目录
+uv run python scripts/evaluate.py --load_from torch --weight sft_omni     # 原生 PyTorch 权重（out/sft_omni_768.pth）
+uv run python scripts/evaluate.py --load_from out/minimind-3o             # transformers 格式目录
 ```
 
 主要参数：
@@ -26,7 +26,7 @@ python scripts/evaluate.py --load_from out/minimind-3o             # transformer
 支持文本、语音、图像输入，以及实时语音通话（WebSocket，基于 Silero VAD 做端点检测和打断）。
 
 ```bash
-python apps/web/server.py --load_from out --port 7860
+uv run python apps/web/server.py --load_from out --port 7860
 ```
 
 - `--load_from`：扫描该目录下包含权重文件的子目录，页面中可切换模型。
@@ -40,8 +40,8 @@ python apps/web/server.py --load_from out --port 7860
 非实时演示，接口与 Web 应用类似，主要用于快速体验，不支持实时打断。
 
 ```bash
-pip install -e ".[demo]"
-python examples/gradio_demo.py --load_from out
+uv sync --group demo
+uv run python examples/gradio_demo.py --load_from out
 ```
 
 ## 在代码中调用

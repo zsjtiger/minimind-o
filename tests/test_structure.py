@@ -39,7 +39,7 @@ def test_no_legacy_imports_left():
     legacy = ("from model.", "import model.", "from trainer.", "from dataset.", "webui/", "../model/", "./model/")
     hits = []
     for py in ROOT.rglob("*.py"):
-        if any(part in {".git", "tests"} for part in py.parts):
+        if any(part == "tests" or part.startswith(".") for part in py.relative_to(ROOT).parts):
             continue
         text = py.read_text(encoding="utf-8")
         hits += [f"{py.relative_to(ROOT)}: {pat}" for pat in legacy if pat in text]

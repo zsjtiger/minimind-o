@@ -6,7 +6,7 @@
 
 ```text
 baize-v/                        （仓库目录名沿用 minimind-o）
-├── baize_v/                    核心 Python 包（pip 包名 baize-v，import 名 baize_v）
+├── baize_v/                    核心 Python 包（发行名 baize-v，import 名 baize_v）
 │   ├── config.py               MiniMindConfig / OmniConfig
 │   ├── paths.py                项目路径常量，统一以仓库根为基准
 │   ├── models/                 网络结构
@@ -43,8 +43,9 @@ baize-v/                        （仓库目录名沿用 minimind-o）
 ├── tests/                      pytest 测试
 ├── assets/                     随仓库分发的小资产（tokenizer、VAD、音色、评测音频）
 ├── docs/                       文档与图片
-├── pyproject.toml              包元数据、依赖、pytest / ruff 配置
-└── requirements.txt            固定版本的依赖清单
+├── pyproject.toml              包元数据、依赖、dependency-groups、pytest / ruff 配置
+├── uv.lock                     uv 生成的完整依赖锁文件
+└── .python-version             uv 使用的 Python 版本
 ```
 
 运行时产生或需要下载的目录（已在 `.gitignore` 中忽略）：

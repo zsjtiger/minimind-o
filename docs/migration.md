@@ -50,9 +50,9 @@ mv model/SenseVoiceSmall model/siglip2-base-p32-256-ve model/mimi model/campplus
 旧版脚本需要 `cd trainer` 或 `cd scripts` 才能运行，依赖相对路径 `../model`、`../out`。新版统一从仓库根目录运行，并先安装一次包：
 
 ```bash
-pip install -e .
-python scripts/train_sft.py --help
-python scripts/evaluate.py --help
+uv sync
+uv run python scripts/train_sft.py --help
+uv run python scripts/evaluate.py --help
 ```
 
 ### 3. 评测脚本的 `--load_from` 参数语义
@@ -66,8 +66,8 @@ python scripts/evaluate.py --help
 
 ### 5. 应用入口
 
-- 实时 Web 应用：`python apps/web/server.py --load_from out`
-- Gradio 示例：`python examples/gradio_demo.py --load_from out`
+- 实时 Web 应用：`uv run python apps/web/server.py --load_from out`
+- Gradio 示例：`uv run python examples/gradio_demo.py --load_from out`
 
 两者都会扫描 `out/` 下包含权重文件的子目录。
 

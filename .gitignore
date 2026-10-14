@@ -23,3 +23,6 @@ minimind-3o/
 *.pt.tmp
 *.wav
 *.parquet
+
+# uv 虚拟环境
+.venv/
