@@ -1,4 +1,4 @@
-import argparse, os, sys, json, time, math, torch, threading, queue, base64, io, logging, contextlib
+import argparse, os, json, time, math, torch, threading, queue, base64, io, logging, contextlib
 import numpy as np
 import torchaudio
 from flask import Flask, request, Response, send_from_directory
@@ -6,10 +6,10 @@ from flask_cors import CORS
 from flask_sock import Sock
 from PIL import Image
 from pydub import AudioSegment
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from baize_v.models import BaizeOmni
 from baize_v.inference.realtime import RealtimeSession
-from baize_v.inference.loader import scan_hf_models
+from baize_v.inference.loader import scan_hf_models, load_hf_model, clear_remote_code_cache
+from baize_v.inference.mimi import frames_to_codes, mask_special, decode_codes
+from baize_v.models.encoders import load_sensevoice, load_vision
 from baize_v.models.summary import log_model_params
 from baize_v.paths import SENSEVOICE_DIR, SIGLIP_DIR, MIMI_DIR, CAMPPLUS_DIR, SPEAKER_DIR, VAD_PATH
 from baize_v.tokens import AUDIO_PAD_TOKEN
@@ -59,13 +59,10 @@ def build_ids(prompt, history):
     return torch.tensor(tok(t).data['input_ids'], dtype=torch.long, device=dev)[None, ...]
 
 def _mimi_decode(frames):
-    codes = [f for f in frames if f and len(f) == 8]
-    if not codes or not M['mimi']: return None
-    mc = torch.tensor(codes, dtype=torch.long, device=M['device']).T.unsqueeze(0)
-    mc = torch.where(mc >= AUDIO_PAD_TOKEN, torch.zeros_like(mc), mc)
-    with torch.no_grad():
-        au = M['mimi'].decode(mc).audio_values.squeeze().cpu().numpy()
-    return au, mc.shape[-1]
+    mc = frames_to_codes(frames, M['device'])
+    if mc is None or not M['mimi']: return None
+    mc = mask_special(mc)
+    return decode_codes(M['mimi'], mc), mc.shape[-1]
 
 def pcm_bytes(frames, ov):
     r = _mimi_decode(frames)
@@ -190,24 +187,15 @@ def run_generate(x, audio_inputs, audio_lens, pixel_values, **kw):
 
 def load_main_model(model_path, model_name):
     with MODEL_LOCK:
-        [sys.modules.pop(k) for k in list(sys.modules) if 'transformers_modules' in k]
+        clear_remote_code_cache()
         M.pop('model', None); M.pop('tokenizer', None)
         if torch.cuda.is_available(): torch.cuda.empty_cache()
-        tok = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-        m = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True)
-        vision_encoder, vision_processor = BaizeOmni.load_vision(SIGLIP_DIR)
-        audio_encoder, audio_processor = BaizeOmni.load_sensevoice(SENSEVOICE_DIR)
-        object.__setattr__(m, 'vision_encoder', vision_encoder)
-        object.__setattr__(m, 'vision_processor', vision_processor)
-        object.__setattr__(m, 'audio_encoder', audio_encoder)
-        object.__setattr__(m, 'audio_processor', audio_processor)
-        m = m.half().eval().to(M['device'])
-        if m.audio_encoder: m.audio_encoder.to(M['device'])
-        if m.vision_encoder: m.vision_encoder.to(M['device'])
+        tok, m = load_hf_model(model_path, M['device'], audio=load_sensevoice(SENSEVOICE_DIR), vision=load_vision(SIGLIP_DIR))
         M['tokenizer'], M['model'], M['model_name'] = tok, m, model_name
         params = sum(p.numel() for p in m.parameters()) / 1e6
         print(f'Loaded model: {model_name} ({params:.2f}M)')
         return round(params, 2)
+
 
 def prepare_turn(text, samples, image_b64, do_asr_for_image):
     """返回 (audio_inputs, audio_lens, pixel_values, prompt_for_model, user_text_for_history, asr_thread, asr_result)"""
@@ -343,94 +331,123 @@ def chat():
 
 
 @sock.route('/ws/realtime')
-def realtime(ws):
-    session = RealtimeSession(M['vad_path'])
-    q = queue.Queue(); alive = [True]; state = {'history': [], 'image': None}
-    n_hist = M['cfg'].max_history_turns
+class RealtimeConnection:
+    """一条 WebSocket 实时连接：接收音频，VAD 判定语音段后生成回复并流式回传。"""
 
-    def push_audio(data):
-        return session.push_chunk(np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0)
+    def __init__(self, ws):
+        self.ws = ws
+        self.session = RealtimeSession(M['vad_path'])
+        self.q = queue.Queue()
+        self.alive = [True]
+        self.state = {'history': [], 'image': None}
+        self.n_hist = M['cfg'].max_history_turns
 
-    def set_ctx(msg):
+    def _send(self, payload):
+        self.ws.send(json.dumps(payload))
+
+    def _send_vad(self):
+        self._send({'type': 'vad', 'speaking': self.session.speaking})
+
+    def _send_pcm(self, pcm):
+        self._send({'type': 'pcm', 'data': base64.b64encode(pcm).decode()})
+
+    def push_audio(self, data):
+        return self.session.push_chunk(np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0)
+
+    def set_ctx(self, msg):
         h = msg.get('history') or []
-        state['history'] = h[-n_hist:] if n_hist > 0 else []
-        if 'image' in msg: state['image'] = msg.get('image')
-        if 'voice' in msg: state['voice'] = msg.get('voice', 'default')
+        self.state['history'] = h[-self.n_hist:] if self.n_hist > 0 else []
+        if 'image' in msg: self.state['image'] = msg.get('image')
+        if 'voice' in msg: self.state['voice'] = msg.get('voice', 'default')
 
-    def poll_interrupt():
+    def poll_interrupt(self):
+        """生成过程中非阻塞地查看新消息；语音打断或停止时返回 True。"""
         while True:
-            try: data = q.get_nowait()
+            try: data = self.q.get_nowait()
             except queue.Empty: return False
             if isinstance(data, bytes):
-                if push_audio(data) == 'interrupt': return True
-                ws.send(json.dumps({'type': 'vad', 'speaking': session.speaking}))
+                if self.push_audio(data) == 'interrupt': return True
+                self._send_vad()
             else:
                 m = json.loads(data)
-                if m.get('type') == 'context': set_ctx(m)
+                if m.get('type') == 'context': self.set_ctx(m)
                 elif m.get('type') in ('stop', 'end'):
-                    if m['type'] == 'end': alive[0] = False
-                    session.interrupt = True; return True
+                    if m['type'] == 'end': self.alive[0] = False
+                    self.session.interrupt = True
+                    return True
 
-    def recv_loop():
-        while alive[0]:
+    def recv_loop(self):
+        while self.alive[0]:
             try:
-                data = ws.receive(timeout=1)
-                if data is None: alive[0] = False; break
-                q.put(data)
-            except: alive[0] = False; break
+                data = self.ws.receive(timeout=1)
+                if data is None: self.alive[0] = False; break
+                self.q.put(data)
+            except: self.alive[0] = False; break
 
-    threading.Thread(target=recv_loop, daemon=True).start()
-    try:
-        while alive[0]:
-            try: data = q.get(timeout=0.05)
-            except queue.Empty: continue
-            if isinstance(data, str):
-                m = json.loads(data)
-                if m.get('type') == 'context': set_ctx(m)
-                elif m.get('type') == 'stop': session.interrupt = True
-                elif m.get('type') == 'end': break
-                continue
-            if session.generating:
-                push_audio(data); ws.send(json.dumps({'type': 'vad', 'speaking': session.speaking})); continue
-            status = push_audio(data)
-            ws.send(json.dumps({'type': 'vad', 'speaking': session.speaking}))
-            if status != 'speech_end': continue
+    def handle_control(self, m):
+        """空闲时处理文本控制消息。返回 False 表示结束连接。"""
+        if m.get('type') == 'context': self.set_ctx(m)
+        elif m.get('type') == 'stop': self.session.interrupt = True
+        elif m.get('type') == 'end': return False
+        return True
 
-            session.generating = True
-            audio = session.get_audio()
-            ws.send(json.dumps({'type': 'generating'}))
-            audio_inputs, audio_lens, pixel_values, prompt, user_text, asr_th, asr_res = prepare_turn(
-                '', audio, state['image'], do_asr_for_image=True)
-            if state['image']: state['image'] = None
-            x = build_ids(prompt, state['history'])
-            va_rt = voice_args(state.get('voice', 'default'))
+    def respond(self):
+        """对一段完整语音生成回复，流式返回文本与音频。"""
+        s = self.session
+        s.generating = True
+        audio = s.get_audio()
+        self._send({'type': 'generating'})
+        audio_inputs, audio_lens, pixel_values, prompt, user_text, asr_th, asr_res = prepare_turn(
+            '', audio, self.state['image'], do_asr_for_image=True)
+        if self.state['image']: self.state['image'] = None
+        x = build_ids(prompt, self.state['history'])
+        va_rt = voice_args(self.state.get('voice', 'default'))
 
-            frames, full_text, interrupted = [], '', False
-            for y, af in run_generate(x, audio_inputs, audio_lens, pixel_values,
-                                       max_new_tokens=512, temperature=0.7, **va_rt):
-                if poll_interrupt() or session.interrupt: interrupted = True; break
-                if y is not None:
-                    ans = M['tokenizer'].decode(y[0].tolist(), skip_special_tokens=True)
-                    if ans and ans[-1] != '\ufffd' and len(ans) > len(full_text):
-                        ws.send(json.dumps({'type': 'text', 'content': ans[len(full_text):]})); full_text = ans
-                if af:
-                    frames.append(af)
-                    for pcm in stream_pcm(frames):
-                        ws.send(json.dumps({'type': 'pcm', 'data': base64.b64encode(pcm).decode()}))
-            if not interrupted:
-                for pcm in stream_pcm(frames, flush=True):
-                    ws.send(json.dumps({'type': 'pcm', 'data': base64.b64encode(pcm).decode()}))
-            if asr_th:
-                asr_th.join(); user_text = asr_res[0] or user_text
-            if n_hist > 0:
-                if user_text: state['history'].append({'role': 'user', 'content': user_text})
-                if full_text: state['history'].append({'role': 'assistant', 'content': full_text})
-                state['history'] = state['history'][-n_hist:]
-            ws.send(json.dumps({'type': 'done', 'interrupted': interrupted or session.interrupt}))
-            session.generating = False; session.interrupt = False
-    finally:
-        alive[0] = False
+        frames, full_text, interrupted = [], '', False
+        for y, af in run_generate(x, audio_inputs, audio_lens, pixel_values, max_new_tokens=512, temperature=0.7, **va_rt):
+            if self.poll_interrupt() or s.interrupt: interrupted = True; break
+            if y is not None:
+                ans = M['tokenizer'].decode(y[0].tolist(), skip_special_tokens=True)
+                if ans and ans[-1] != '\ufffd' and len(ans) > len(full_text):
+                    self._send({'type': 'text', 'content': ans[len(full_text):]})
+                    full_text = ans
+            if af:
+                frames.append(af)
+                for pcm in stream_pcm(frames): self._send_pcm(pcm)
+        if not interrupted:
+            for pcm in stream_pcm(frames, flush=True): self._send_pcm(pcm)
+        if asr_th:
+            asr_th.join(); user_text = asr_res[0] or user_text
+        self._remember(user_text, full_text)
+        self._send({'type': 'done', 'interrupted': interrupted or s.interrupt})
+        s.generating = False; s.interrupt = False
 
+    def _remember(self, user_text, assistant_text):
+        if self.n_hist > 0:
+            if user_text: self.state['history'].append({'role': 'user', 'content': user_text})
+            if assistant_text: self.state['history'].append({'role': 'assistant', 'content': assistant_text})
+            self.state['history'] = self.state['history'][-self.n_hist:]
+
+    def run(self):
+        threading.Thread(target=self.recv_loop, daemon=True).start()
+        try:
+            while self.alive[0]:
+                try: data = self.q.get(timeout=0.05)
+                except queue.Empty: continue
+                if isinstance(data, str):
+                    if not self.handle_control(json.loads(data)): break
+                    continue
+                if self.session.generating:
+                    self.push_audio(data); self._send_vad(); continue
+                status = self.push_audio(data)
+                self._send_vad()
+                if status == 'speech_end': self.respond()
+        finally:
+            self.alive[0] = False
+
+
+def realtime(ws):
+    RealtimeConnection(ws).run()
 
 def init_model(args):
     M['cfg'] = args; M['device'] = args.device

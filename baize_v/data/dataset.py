@@ -15,7 +15,7 @@ from torch.utils.data import Dataset
 from .chat import pre_processing_chat, post_processing_chat
 from .augment import augment_wav, augment_mel
 from .labels import generate_text_labels, apply_scheduled_sampling
-from ..tokens import AUDIO_STOP_TOKEN, AUDIO_PAD_TOKEN, AUDIO_SPK_TOKEN, AUDIO_VOCAB_SIZE
+from ..tokens import AUDIO_STOP_TOKEN, AUDIO_PAD_TOKEN, AUDIO_SPK_TOKEN, AUDIO_VOCAB_SIZE, NUM_AUDIO_LAYERS
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -107,125 +107,143 @@ class OmniDataset(Dataset):
 
     
     def __getitem__(self, index: int):
-        conversations = json.loads(self.table['conversations'][index].as_py())
-        question_audios = self.table['question_audios'][index].as_py() if 'question_audios' in self.table.column_names else []
-        answer_audios = self.table['answer_audios'][index].as_py() if 'answer_audios' in self.table.column_names else []
-        image_bytes = self.table['image_bytes'][index].as_py() if 'image_bytes' in self.table.column_names else []
-        if image_bytes and not isinstance(image_bytes, list): image_bytes = [image_bytes]
-        ref_audios = self.table['ref_audios'][index].as_py() if 'ref_audios' in self.table.column_names else []
-        spk_emb_raw = self.table['spk_emb'][index].as_py() if 'spk_emb' in self.table.column_names else []
-        
-        # 随机截断到某一轮（每轮=user+assistant）
-        asst_indices = [i for i, t in enumerate(conversations) if t['role'] == 'assistant']
-        if len(asst_indices) > 1:
-            rand_idx = random.randint(0, len(asst_indices) - 1)
-            # 从随机轮次开始，向前回退直到长度安全
-            for i in range(rand_idx, -1, -1):
-                conversations = conversations[:asst_indices[i] + 1]
-                test_prompt = self.create_chat_prompt(conversations, 0)
-                if len(self.tokenizer(test_prompt).input_ids) + 100 < self.max_length:
-                    break
-        
-        # 加载最后一个user的图像（按user轮次索引访问，与audio一致）
-        pixel_values = None
-        user_count = sum(1 for t in conversations if t['role'] == 'user')
-        if image_bytes and len(image_bytes) > 0 and self.vision_processor:
-            pixel_values = self.load_image_inputs(image_bytes[0])
-        
-        # 只加载最后一个user的audio（按user轮次索引访问）
-        audio_inputs, audio_len, audio_features_length = None, 0, 0
-        user_count = sum(1 for t in conversations if t['role'] == 'user')
-        if question_audios and user_count > 0 and user_count <= len(question_audios) and self.audio_processor:
-            audio_bytes = question_audios[user_count - 1]
-            if audio_bytes:
-                mel, valid_len = self.load_audio_inputs(audio_bytes)
-                if mel is not None:
-                    audio_inputs = mel.unsqueeze(0)
-                    audio_len = valid_len
-                    audio_features_length = valid_len or 1
-        
-        # 混合训练时，无音频样本返回dummy tensor保持batch索引尽可能对齐 (SenseVoice: T x 560)
+        cols = self._read_row(index)
+        conversations = self._truncate_turns(cols['conversations'])
+        n_user = sum(1 for t in conversations if t['role'] == 'user')
+        n_asst = sum(1 for t in conversations if t['role'] == 'assistant')
+
+        pixel_values = self._load_pixel_values(cols['image_bytes'])
+        audio_inputs, audio_len, audio_features_length = self._load_question_audio(cols['question_audios'], n_user)
         if audio_inputs is None and self.audio_processor:
-            audio_inputs = torch.zeros(1, 1, 560)
+            audio_inputs = torch.zeros(1, 1, 560)   # 无音频样本：dummy tensor，保持 batch 对齐（SenseVoice: T x 560）
             audio_len = 0
         if pixel_values is None and self.vision_processor:
             pixel_values = {'pixel_values': torch.zeros(1, 3, 256, 256)}
-        
-        # 从answer_audios获取最后一个assistant的音频codes
-        last_audio_codes = None
-        asst_count = sum(1 for t in conversations if t['role'] == 'assistant')
-        if answer_audios and asst_count > 0 and asst_count <= len(answer_audios):
-            tokens = answer_audios[asst_count - 1]
-            if tokens:
-                audio_codes_8layers = [[] for _ in range(8)]
-                for i in range(0, len(tokens) - 7, 8):
-                    for j in range(8): audio_codes_8layers[j].append(tokens[i + j])
-                for layer in audio_codes_8layers: layer.append(self.audio_stop_token)
-                last_audio_codes = audio_codes_8layers
-        
-        # 生成prompt (text input_ids)
+
+        last_audio_codes = self._answer_codes(cols['answer_audios'], n_asst)
+
         prompt = self.create_chat_prompt(conversations, audio_features_length)
         if pixel_values is not None: prompt = prompt.replace('<image>', self.image_token)
         input_ids = self.tokenizer(prompt).input_ids[:self.max_length]
-        
-        # PAD input_ids到max_length
         input_ids += [self.tokenizer.pad_token_id] * (self.max_length - len(input_ids))
-        
-        # 生成labels（只训练最后一个assistant）
+
         text_labels, assistant_ranges = generate_text_labels(input_ids, self.bos_id, self.eos_id, self.max_length)
         for start, end in assistant_ranges[:-1]:
             mask_end = min(end + len(self.eos_id), self.max_length)
             text_labels[start:mask_end] = [-100] * (mask_end - start)
-        
-        # 生成7层audio targets（只填充最后一个assistant）
-        Y_audio_layers = [[self.audio_pad_token] * self.max_length for _ in range(8)]
-        audio_labels = [[-100] * self.max_length for _ in range(8)]
-        if assistant_ranges and last_audio_codes:
-            assistant_start, assistant_end = assistant_ranges[-1]
-            for pos in range(assistant_start, min(assistant_end, assistant_start + 50)):
-                if input_ids[pos:pos + len(self.think_end_ids)] == self.think_end_ids:
-                    assistant_start = pos + len(self.think_end_ids)
-                    break
-            # spk_emb 占位 + ref_codes 右对齐（50% 概率 drop ref_codes，只保留 spk）
-            has_spk = bool(spk_emb_raw)
-            has_ref = bool(ref_audios) and random.random() > 0.5
-            spk_reserve = 1 if has_spk else 0
-            if has_ref:
-                ref_codes = [[] for _ in range(8)]
-                for i in range(0, len(ref_audios) - 7, 8):
-                    for j in range(8): ref_codes[j].append(ref_audios[i + j])
-                ref_len = len(ref_codes[0])
-                ref_start = max(spk_reserve, assistant_start - ref_len)
-                for layer_idx in range(8):
-                    codes = ref_codes[layer_idx][-(assistant_start - ref_start):] if ref_len > (assistant_start - ref_start) else ref_codes[layer_idx]
-                    for i, code in enumerate(codes):
-                        Y_audio_layers[layer_idx][ref_start + i] = code
-            else:
-                ref_start = assistant_start
-            if has_spk and ref_start > 0:
-                spk_pos = ref_start - 1
-                for layer_idx in range(8):
-                    Y_audio_layers[layer_idx][spk_pos] = self.audio_spk_token
-            # target codes 填充到 assistant_start 之后（参与 loss）
-            for layer_idx in range(8):
-                codes = last_audio_codes[layer_idx]
-                start_pos = assistant_start + layer_idx + 1
-                for i, code in enumerate(codes):
-                    if start_pos + i < self.max_length:
-                        Y_audio_layers[layer_idx][start_pos + i] = code
-                        audio_labels[layer_idx][start_pos + i] = code
-        
-        # 构造9路输入：input_ids = (9, T) = 8路audio + 1路text
-        X_audio = torch.tensor([layer[:-1] for layer in Y_audio_layers], dtype=torch.long)  # (8, T-1)
-        X_text = torch.tensor(input_ids[:-1], dtype=torch.long)  # (T-1,)
-        input_ids = torch.cat((X_audio, X_text.unsqueeze(0)), dim=0)  # (9, T-1)
-        text_labels = torch.tensor(text_labels[1:], dtype=torch.long)  # (T-1,)
-        audio_labels = torch.tensor([layer[1:] for layer in audio_labels], dtype=torch.long)  # (8, T-1)
-        
+
+        Y_audio_layers, audio_labels = self._build_audio_targets(input_ids, assistant_ranges, last_audio_codes,
+                                                                 cols['ref_audios'], bool(cols['spk_emb']))
+
+        # 9 路输入 = 8 路音频 + 1 路文本，去掉最后一个位置作为输入，标签整体左移一位
+        X_audio = torch.tensor([layer[:-1] for layer in Y_audio_layers], dtype=torch.long)
+        X_text = torch.tensor(input_ids[:-1], dtype=torch.long)
+        input_ids = torch.cat((X_audio, X_text.unsqueeze(0)), dim=0)
+        text_labels = torch.tensor(text_labels[1:], dtype=torch.long)
+        audio_labels = torch.tensor([layer[1:] for layer in audio_labels], dtype=torch.long)
+
         input_ids = apply_scheduled_sampling(input_ids, audio_labels, text_labels, self.scheduled_sampling_prob,
-                                 self.audio_vocab_size, self.text_vocab_size, self.image_token_id)
-        spk_emb = torch.tensor(spk_emb_raw, dtype=torch.float32) if spk_emb_raw else torch.zeros(192)
+                                             self.audio_vocab_size, self.text_vocab_size, self.image_token_id)
+        spk_emb = torch.tensor(cols['spk_emb'], dtype=torch.float32) if cols['spk_emb'] else torch.zeros(192)
         return input_ids, text_labels, audio_labels, audio_inputs, audio_len, pixel_values, spk_emb
 
+    def _read_row(self, index):
+        """读取一行的各列；缺失的列返回空值。不涉及随机数。"""
+        names = self.table.column_names
 
-# 测试parquet数据读取
+        def col(name, default):
+            return self.table[name][index].as_py() if name in names else default
+
+        image_bytes = col('image_bytes', [])
+        if image_bytes and not isinstance(image_bytes, list):
+            image_bytes = [image_bytes]
+        return {
+            'conversations': json.loads(self.table['conversations'][index].as_py()),
+            'question_audios': col('question_audios', []),
+            'answer_audios': col('answer_audios', []),
+            'image_bytes': image_bytes,
+            'ref_audios': col('ref_audios', []),
+            'spk_emb': col('spk_emb', []),
+        }
+
+    def _truncate_turns(self, conversations):
+        """随机截断到某一轮（每轮 = user + assistant），并回退直到长度安全。"""
+        asst_indices = [i for i, t in enumerate(conversations) if t['role'] == 'assistant']
+        if len(asst_indices) <= 1:
+            return conversations
+        rand_idx = random.randint(0, len(asst_indices) - 1)
+        for i in range(rand_idx, -1, -1):
+            conversations = conversations[:asst_indices[i] + 1]
+            test_prompt = self.create_chat_prompt(conversations, 0)
+            if len(self.tokenizer(test_prompt).input_ids) + 100 < self.max_length:
+                break
+        return conversations
+
+    def _load_pixel_values(self, image_bytes):
+        """只取第一张图；没有图像或没有视觉处理器时返回 None。"""
+        if image_bytes and len(image_bytes) > 0 and self.vision_processor:
+            return self.load_image_inputs(image_bytes[0])
+        return None
+
+    def _load_question_audio(self, question_audios, n_user):
+        """只加载最后一个 user 轮次的音频。返回 (audio_inputs, audio_len, 占位长度)。"""
+        if question_audios and n_user > 0 and n_user <= len(question_audios) and self.audio_processor:
+            audio_bytes = question_audios[n_user - 1]
+            if audio_bytes:
+                mel, valid_len = self.load_audio_inputs(audio_bytes)
+                if mel is not None:
+                    return mel.unsqueeze(0), valid_len, valid_len or 1
+        return None, 0, 0
+
+    def _answer_codes(self, answer_audios, n_asst):
+        """取最后一个 assistant 轮次的音频码，整理为 8 层列表并追加 stop token。"""
+        if not (answer_audios and n_asst > 0 and n_asst <= len(answer_audios)):
+            return None
+        tokens = answer_audios[n_asst - 1]
+        if not tokens:
+            return None
+        layers = [[] for _ in range(NUM_AUDIO_LAYERS)]
+        for i in range(0, len(tokens) - 7, 8):
+            for j in range(NUM_AUDIO_LAYERS): layers[j].append(tokens[i + j])
+        for layer in layers: layer.append(self.audio_stop_token)
+        return layers
+
+    def _build_audio_targets(self, input_ids, assistant_ranges, last_audio_codes, ref_audios, has_spk):
+        """填充 8 层音频目标：[说话人占位][参考音频 codes][目标 codes]，只有最后一个 assistant 参与 loss。"""
+        Y_audio_layers = [[self.audio_pad_token] * self.max_length for _ in range(NUM_AUDIO_LAYERS)]
+        audio_labels = [[-100] * self.max_length for _ in range(NUM_AUDIO_LAYERS)]
+        if not (assistant_ranges and last_audio_codes):
+            return Y_audio_layers, audio_labels
+
+        assistant_start, assistant_end = assistant_ranges[-1]
+        for pos in range(assistant_start, min(assistant_end, assistant_start + 50)):
+            if input_ids[pos:pos + len(self.think_end_ids)] == self.think_end_ids:
+                assistant_start = pos + len(self.think_end_ids)
+                break
+
+        # 50% 概率丢弃参考音频，只保留说话人向量
+        has_ref = bool(ref_audios) and random.random() > 0.5
+        spk_reserve = 1 if has_spk else 0
+        if has_ref:
+            ref_codes = [[] for _ in range(NUM_AUDIO_LAYERS)]
+            for i in range(0, len(ref_audios) - 7, 8):
+                for j in range(NUM_AUDIO_LAYERS): ref_codes[j].append(ref_audios[i + j])
+            ref_len = len(ref_codes[0])
+            ref_start = max(spk_reserve, assistant_start - ref_len)
+            for layer_idx in range(NUM_AUDIO_LAYERS):
+                codes = ref_codes[layer_idx][-(assistant_start - ref_start):] if ref_len > (assistant_start - ref_start) else ref_codes[layer_idx]
+                for i, code in enumerate(codes):
+                    Y_audio_layers[layer_idx][ref_start + i] = code
+        else:
+            ref_start = assistant_start
+        if has_spk and ref_start > 0:
+            for layer_idx in range(NUM_AUDIO_LAYERS):
+                Y_audio_layers[layer_idx][ref_start - 1] = self.audio_spk_token
+
+        for layer_idx in range(NUM_AUDIO_LAYERS):
+            start_pos = assistant_start + layer_idx + 1
+            for i, code in enumerate(last_audio_codes[layer_idx]):
+                if start_pos + i < self.max_length:
+                    Y_audio_layers[layer_idx][start_pos + i] = code
+                    audio_labels[layer_idx][start_pos + i] = code
+        return Y_audio_layers, audio_labels

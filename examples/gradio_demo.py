@@ -3,7 +3,6 @@
 用法（仓库根目录，已执行 uv sync）：uv run python examples/gradio_demo.py
 """
 import os
-import sys
 import argparse
 import io
 import tempfile
@@ -17,11 +16,11 @@ import torch
 import gradio as gr
 from threading import Thread, Lock
 from PIL import Image
-from transformers import AutoTokenizer, AutoModelForCausalLM, MimiModel
-from baize_v.models import BaizeOmni
-from baize_v.inference.loader import scan_hf_models
+from transformers import MimiModel
+from baize_v.inference.loader import scan_hf_models, load_hf_model, clear_remote_code_cache
+from baize_v.inference.mimi import frames_to_codes, mask_special, decode_codes
+from baize_v.models.encoders import load_sensevoice, load_vision
 from baize_v.paths import SENSEVOICE_DIR, SIGLIP_DIR, MIMI_DIR, SPEAKER_DIR
-from baize_v.tokens import AUDIO_PAD_TOKEN
 logging.getLogger().setLevel(logging.ERROR)
 with contextlib.redirect_stdout(io.StringIO()):
     from funasr import AutoModel
@@ -71,40 +70,21 @@ def normalize_audio(samples, sr, target_sr=16000):
 
 
 def frames_to_mimi(frames):
-    codes = [f for f in frames if f and len(f) == 8]
-    if not codes:
-        return None
-    return torch.tensor(codes, dtype=torch.long).T.unsqueeze(0)
+    return frames_to_codes(frames)
 
 
 def decode_mimi(mimi_codes):
     if mimi_codes is None or mimi_codes.numel() == 0:
         return None
-    filtered = torch.where(mimi_codes >= AUDIO_PAD_TOKEN, torch.zeros_like(mimi_codes), mimi_codes).to(next(mimi_model.parameters()).device)
-    with torch.no_grad():
-        audio = mimi_model.decode(filtered).audio_values
-    return audio.squeeze().float().cpu().numpy()
+    filtered = mask_special(mimi_codes).to(next(mimi_model.parameters()).device)
+    return decode_codes(mimi_model, filtered).astype(np.float32)
 
 
-
-
-def load_hf_model(model_path):
+def load_hf_model_into_globals(model_path):
     global model, tokenizer
     with model_lock:
-        [sys.modules.pop(k) for k in list(sys.modules) if 'transformers_modules' in k]
-        tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-        model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True)
-        vision_encoder, vision_processor = BaizeOmni.load_vision(args.vision_model)
-        audio_encoder, audio_processor = BaizeOmni.load_sensevoice(args.audio_encoder)
-        object.__setattr__(model, 'vision_encoder', vision_encoder)
-        object.__setattr__(model, 'vision_processor', vision_processor)
-        object.__setattr__(model, 'audio_encoder', audio_encoder)
-        object.__setattr__(model, 'audio_processor', audio_processor)
-        model = model.half().eval().to(device)
-        if model.audio_encoder:
-            model.audio_encoder.to(device)
-        if model.vision_encoder:
-            model.vision_encoder.to(device)
+        clear_remote_code_cache()
+        tokenizer, model = load_hf_model(model_path, device, audio=load_sensevoice(args.audio_encoder), vision=load_vision(args.vision_model))
         name = os.path.basename(model_path)
         params = sum(p.numel() for p in model.parameters()) / 1e6
         print(f'已加载 {name}，参数量：{params:.2f}M')
@@ -269,7 +249,7 @@ def launch_gradio(server_name="0.0.0.0", server_port=8888):
             if model_dict:
                 model_dd = gr.Dropdown(choices=list(model_dict.keys()), value=current_model_name, label="模型选择", scale=1, min_width=180)
                 status = gr.Textbox(value=f"已加载: {current_model_name}", label="状态", interactive=False, scale=2)
-                model_dd.change(lambda n: load_hf_model(model_dict[n]), [model_dd], [status])
+                model_dd.change(lambda n: load_hf_model_into_globals(model_dict[n]), [model_dd], [status])
 
         msg.submit(respond, [msg, aud, voice_dd, chatbot, model_history, turns_dd], [chatbot, audio_out, aud, model_history, audio_status])
 
@@ -298,7 +278,7 @@ if __name__ == '__main__':
         print(f"未在 {os.path.abspath(args.load_from)} 找到 transformers 模型")
         exit(1)
     current_model_name = list(model_dict.keys())[0]
-    load_hf_model(model_dict[current_model_name])
+    load_hf_model_into_globals(model_dict[current_model_name])
 
     try:
         mimi_model = MimiModel.from_pretrained(args.mimi_path).eval().to(mimi_device)
