@@ -183,14 +183,14 @@ uv run python scripts/evaluate.py --load_from torch --weight sft_omni
 如果使用 transformers 格式模型，可先下载模型目录：
 
 ```bash
-git clone https://huggingface.co/jingyaogong/minimind-3o out/minimind-3o
-uv run python scripts/evaluate.py --load_from out/minimind-3o
+git clone https://huggingface.co/jingyaogong/minimind-3o out/baize-v
+uv run python scripts/evaluate.py --load_from out/baize-v
 ```
 
 ### 3' 启动 WebUI（可选）
 
 ```bash
-# 先把 transformers 格式模型放到 ./out/ 下（如 ./out/minimind-3o），服务会自动扫描该目录
+# 先把 transformers 格式模型放到 ./out/ 下（如 ./out/baize-v），服务会自动扫描该目录
 uv run python apps/web/server.py --load_from out
 ```
 

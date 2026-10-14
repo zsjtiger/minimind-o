@@ -10,7 +10,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 MODULES = [
     "baize_v.config", "baize_v.paths",
-    "baize_v.models", "baize_v.models.minimind", "baize_v.models.omni", "baize_v.models.talker",
+    "baize_v.models", "baize_v.models.llm", "baize_v.models.omni", "baize_v.models.talker",
     "baize_v.models.projectors", "baize_v.models.encoders",
     "baize_v.data", "baize_v.data.dataset", "baize_v.data.chat", "baize_v.data.augment",
     "baize_v.data.labels", "baize_v.data.collate",

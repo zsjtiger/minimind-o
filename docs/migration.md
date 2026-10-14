@@ -34,9 +34,13 @@
 
 ## 需要用户手动处理的变化
 
-### 0. 模型类更名
+### 0. 类名、模型类型与导出目录更名
 
-`MiniMindOmni` 更名为 `BaizeOmni`。旧名称在 `baize_v/models/omni.py` 中保留了别名，旧代码无需立即修改。`model_type` 仍为 `minimind-o`，以便已导出的 transformers 模型能被识别。
+- 类名：`MiniMindConfig` / `MiniMindModel` / `MiniMindForCausalLM` / `MiniMindBlock` / `MiniMindOmni` 分别更名为 `BaizeConfig` / `BaizeModel` / `BaizeForCausalLM` / `BaizeBlock` / `BaizeOmni`。旧名称均保留别名，旧代码无需立即修改。
+- 基座模块文件：`baize_v/models/minimind.py` 更名为 `baize_v/models/llm.py`。
+- `model_type`：`minimind` → `baize`，`minimind-o` → `baize_v`。**已导出的 transformers 模型**的 `config.json` 仍写着旧值；加载时请依赖其自带的 `auto_map` 与 `trust_remote_code=True`。若出现无法识别的情况，手动把 `config.json` 中的 `model_type` 改为新值即可，权重无需转换。
+- 训练数据的系统提示词由 “你是minimind” 改为 “你是Baize”。这会改变基于该提示词的训练分布，若要复现旧模型请保留旧提示词。
+- 本地导出目录：`out/minimind-3o` 改为 `out/baize-v`。Hugging Face 上的仓库名 `jingyaogong/minimind-3o` 不变。
 
 ### 1. 外部预训练权重目录改为 `pretrained/`
 
@@ -66,7 +70,7 @@ uv run python scripts/evaluate.py --help
 
 ### 4. 导出目录
 
-`scripts/convert.py` 的默认输出从 `../minimind-3o` 改为 `out/minimind-3o`。
+`scripts/convert.py` 的默认输出从 `../minimind-3o` 改为 `out/baize-v`。
 
 ### 5. 应用入口
 

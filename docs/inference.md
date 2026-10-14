@@ -4,7 +4,7 @@
 
 ```bash
 uv run python scripts/evaluate.py --load_from torch --weight sft_omni     # 原生 PyTorch 权重（out/sft_omni_768.pth）
-uv run python scripts/evaluate.py --load_from out/minimind-3o             # transformers 格式目录
+uv run python scripts/evaluate.py --load_from out/baize-v             # transformers 格式目录
 ```
 
 主要参数：

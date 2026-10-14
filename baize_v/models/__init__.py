@@ -1,6 +1,6 @@
-from .minimind import MiniMindModel, MiniMindForCausalLM
+from .llm import BaizeModel, BaizeForCausalLM
 from .omni import BaizeOmni
 from .projectors import MMAudioProjector, MMVisionProjector
 from .talker import TalkerModule
 
-__all__ = ["MiniMindModel", "MiniMindForCausalLM", "BaizeOmni", "MMAudioProjector", "MMVisionProjector", "TalkerModule"]
+__all__ = ["BaizeModel", "BaizeForCausalLM", "BaizeOmni", "MMAudioProjector", "MMVisionProjector", "TalkerModule"]

@@ -1,7 +1,7 @@
 import torch
 from torch import nn
-from ..config import MiniMindConfig
-from .minimind import MiniMindBlock, RMSNorm, precompute_freqs_cis
+from ..config import BaizeConfig
+from .llm import BaizeBlock, RMSNorm, precompute_freqs_cis
 
 
 class TalkerHead(nn.Module):
@@ -30,8 +30,8 @@ class TalkerEmbedding(nn.Module):
 class TalkerModule(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.talker_config = MiniMindConfig(hidden_size=config.talker_hidden_size, use_moe=config.use_moe)
-        self.layers = nn.ModuleList([MiniMindBlock(l, self.talker_config) for l in range(config.num_talker_hidden_layers)])
+        self.talker_config = BaizeConfig(hidden_size=config.talker_hidden_size, use_moe=config.use_moe)
+        self.layers = nn.ModuleList([BaizeBlock(l, self.talker_config) for l in range(config.num_talker_hidden_layers)])
         self.norm = RMSNorm(config.talker_hidden_size, eps=config.rms_norm_eps)
         self.lm_head = TalkerHead(config.talker_hidden_size, config.audio_vocab_size)
         self.embed_tokens = TalkerEmbedding(config.audio_vocab_size, config.talker_hidden_size)

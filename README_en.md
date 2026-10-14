@@ -182,14 +182,14 @@ uv run python scripts/evaluate.py --load_from torch --weight sft_omni
 To use the Transformers-format model, download the model directory first:
 
 ```bash
-git clone https://huggingface.co/jingyaogong/minimind-3o out/minimind-3o
-uv run python scripts/evaluate.py --load_from out/minimind-3o
+git clone https://huggingface.co/jingyaogong/minimind-3o out/baize-v
+uv run python scripts/evaluate.py --load_from out/baize-v
 ```
 
 ### 3' Launch WebUI (optional)
 
 ```bash
-# Put the Transformers-format model under ./out/ first (e.g. ./out/minimind-3o); the server scans this directory automatically
+# Put the Transformers-format model under ./out/ first (e.g. ./out/baize-v); the server scans this directory automatically
 uv run python apps/web/server.py --load_from out
 ```
 

@@ -3,14 +3,14 @@ import torch.nn.functional as F
 from transformers import SiglipImageProcessor, SiglipVisionModel, logging as hf_logging
 from transformers.modeling_outputs import MoeCausalLMOutputWithPast
 from ..config import OmniConfig
-from .minimind import MiniMindForCausalLM, MOEFeedForward, precompute_freqs_cis
+from .llm import BaizeForCausalLM, MOEFeedForward, precompute_freqs_cis
 from .projectors import MMAudioProjector, MMVisionProjector
 from .talker import TalkerModule
 from .encoders import SenseVoiceAudioProcessor
 from ..paths import SENSEVOICE_DIR, SIGLIP_DIR
 
 
-class BaizeOmni(MiniMindForCausalLM):
+class BaizeOmni(BaizeForCausalLM):
     config_class = OmniConfig
     def __init__(self, config: OmniConfig = None, audio_encoder_path=SENSEVOICE_DIR, vision_model_path=SIGLIP_DIR):
         config = config or OmniConfig()
@@ -303,5 +303,5 @@ class BaizeOmni(MiniMindForCausalLM):
                 yield None, audio_frame
 
 
-# 旧名称兼容：MiniMindOmni 已更名为 BaizeOmni
-MiniMindOmni = BaizeOmni
+# 旧名称兼容：BaizeOmni 已更名为 BaizeOmni
+BaizeOmni = BaizeOmni

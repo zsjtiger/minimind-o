@@ -7,7 +7,7 @@
 ```text
 baize-v/                        （仓库目录名沿用 minimind-o）
 ├── baize_v/                    核心 Python 包（发行名 baize-v，import 名 baize_v）
-│   ├── config.py               MiniMindConfig / OmniConfig
+│   ├── config.py               BaizeConfig / OmniConfig
 │   ├── paths.py                项目路径常量，统一以仓库根为基准
 │   ├── models/                 网络结构
 │   │   ├── minimind.py         基础文本 LLM（Attention、MoE、Block、CausalLM）
@@ -80,4 +80,4 @@ baize_v.train  ·  baize_v.inference  ·  baize_v.data
 
 - **路径**：所有默认路径来自 `baize_v/paths.py`，以仓库根目录为基准，与当前工作目录无关。外部权重目录可用环境变量 `BAIZE_PRETRAINED_DIR` 覆盖。
 - **权重键名**：`thinker`、`talker`、`audio_proj`、`vision_proj`、`lm_head` 等属性名属于 checkpoint 格式的一部分，不能随意重命名。`tests/fixtures/omni_tiny_state_dict.json` 记录了完整键名与形状，`tests/test_model.py` 会校验。
-- **模型类型**：`OmniConfig.model_type = "minimind-o"` 保持不变，已导出的 transformers 模型依赖它识别。
+- **模型类型**：`OmniConfig.model_type = "baize_v"` 保持不变，已导出的 transformers 模型依赖它识别。

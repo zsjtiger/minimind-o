@@ -3,8 +3,8 @@ import math
 from transformers import PretrainedConfig
 
 
-class MiniMindConfig(PretrainedConfig):
-    model_type = "minimind"
+class BaizeConfig(PretrainedConfig):
+    model_type = "baize"
     def __init__(self, hidden_size=768, num_hidden_layers=8, use_moe=False, **kwargs):
         super().__init__(**kwargs)
         self.hidden_size = hidden_size
@@ -41,8 +41,8 @@ class MiniMindConfig(PretrainedConfig):
         self.router_aux_loss_coef = kwargs.get("router_aux_loss_coef", 5e-4)
 
 
-class OmniConfig(MiniMindConfig):
-    model_type = "minimind-o"
+class OmniConfig(BaizeConfig):
+    model_type = "baize_v"
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.num_talker_hidden_layers = kwargs.get("num_talker_hidden_layers", 4)
@@ -61,3 +61,6 @@ class OmniConfig(MiniMindConfig):
         self.image_hidden_size = kwargs.get("image_hidden_size", 768)
         self.image_token_len = kwargs.get("image_token_len", 64)
         self.bridge_layer = kwargs.get("bridge_layer", self.num_hidden_layers // 2 - 1)
+
+# 旧名称兼容
+MiniMindConfig = BaizeConfig
