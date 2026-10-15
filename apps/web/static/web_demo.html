@@ -122,6 +122,8 @@ body{height:100vh;background:var(--bg);color:var(--fg);font-family:var(--serif);
 .clone-name{width:100%;padding:10px 12px;background:var(--p2);border:1px solid var(--bd);color:var(--fg);font-family:inherit;font-size:.85rem;outline:none}
 .clone-name:focus{border-color:var(--fg)}
 .clone-script{padding:12px 14px;background:var(--p2);border:1px solid var(--bd);font-size:1rem;line-height:1.85}
+.clone-consent{display:flex;gap:8px;align-items:flex-start;font-size:.74rem;color:var(--fg);line-height:1.6;cursor:pointer}
+.clone-consent input{margin-top:3px}
 .clone-stat{min-height:18px;font-size:.72rem;color:var(--mu);font-family:var(--mono)}
 
 /* ===== Call mode ===== */
@@ -264,7 +266,7 @@ svg.speak ~ .cam{border-color:var(--a);box-shadow:0 0 14px rgba(229,181,122,.45)
 </div>
 
 <div class="snap" id="snap"><video id="snapV" autoplay playsinline muted></video><div class="sr"><button id="snapCancel">cancel</button><button id="snapOk" class="primary">capture</button></div></div>
-<div class="snap" id="cloneModal"><div class="clone-card"><div class="clone-title">Clone Voice</div><div class="clone-hint">请自然朗读下面这句话。建议 3 到 6 秒，环境尽量安静。录完后会自动做 1.5 倍速、提取 `CAM++` speaker embedding 与 `Mimi` ref codes，然后立即加入音色列表。</div><input class="clone-name" id="cloneName" placeholder="音色名，例如：小王" maxlength="24"><div class="clone-script" id="cloneText">今天阳光很好，欢迎来到我的语音克隆小实验。</div><div class="clone-stat" id="cloneStat">点击 start 开始录音</div><div class="sr"><button id="cloneCancel">cancel</button><button id="cloneRec" class="primary">start</button></div></div></div>
+<div class="snap" id="cloneModal"><div class="clone-card"><div class="clone-title">Clone Voice</div><div class="clone-hint">请自然朗读下面这句话。建议 3 到 6 秒，环境尽量安静。录完后会自动做 1.5 倍速、提取 `CAM++` speaker embedding 与 `Mimi` ref codes，然后立即加入音色列表。</div><input class="clone-name" id="cloneName" placeholder="音色名，例如：小王" maxlength="24"><div class="clone-script" id="cloneText">今天阳光很好，欢迎来到我的语音克隆小实验。</div><label class="clone-consent"><input type="checkbox" id="cloneConsent"> <span id="cloneConsentText">加载授权条款…</span></label><div class="clone-stat" id="cloneStat">点击 start 开始录音</div><div class="sr"><button id="cloneCancel">cancel</button><button id="cloneRec" class="primary" disabled>start</button></div></div></div>
 
 <div id="call"><div class="app">
   <div class="topbar">
@@ -482,6 +484,10 @@ sendBtn.onclick=send;
 txt.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
 const imgPop=$('imgPop'),fileBtn=$('fileBtn'),shotBtn=$('shotBtn'),snap=$('snap'),snapV=$('snapV'),snapOk=$('snapOk'),snapCancel=$('snapCancel');
 const cloneModal=$('cloneModal'),cloneText=$('cloneText'),cloneStat=$('cloneStat'),cloneRecBtn=$('cloneRec'),cloneCancelBtn=$('cloneCancel'),cloneName=$('cloneName');
+const cloneConsent=$('cloneConsent'),cloneConsentText=$('cloneConsentText');
+let consentInfo=null;
+fetch('/clone_consent').then(r=>r.json()).then(d=>{consentInfo=d;cloneConsentText.textContent=d.text}).catch(()=>{cloneConsentText.textContent='无法加载授权条款，请刷新页面'});
+cloneConsent.onchange=()=>{if(!cloneRecording&&!cloneBusy)cloneRecBtn.disabled=!cloneConsent.checked};
 cloneText.textContent=CLONE_PROMPT;
 moreBtn.onclick=e=>{e.stopPropagation();morePop.classList.toggle('on')};
 morePop.onclick=e=>{
@@ -489,7 +495,7 @@ morePop.onclick=e=>{
   const del=e.target.closest('.vx');
   if(del){const name=del.dataset.del;if(!confirm('确认删除 '+name+'？'))return;fetch('/delete_voice',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}).then(r=>r.json()).then(d=>{if(!d.ok)throw new Error(d.error);loadVoices(voiceSel.value===name?'default':voiceSel.value)}).catch(e=>alert(e.message));return}
   const add=e.target.closest('.vadd');
-  if(add){closeMore();stopChat();cloneModal.classList.add('on');if(!cloneName.value.trim())cloneName.value='voice_clone';cloneStat.textContent='请自然读完，不用刻意加速';return}
+  if(add){closeMore();stopChat();cloneModal.classList.add('on');cloneConsent.checked=false;cloneRecBtn.disabled=true;if(!cloneName.value.trim())cloneName.value='voice_clone';cloneStat.textContent='请自然读完，不用刻意加速';return}
   const item=e.target.closest('.vitem');
   if(item&&item.dataset.voice){voiceSel.value=item.dataset.voice;renderVoiceList();closeMore()}
 };
@@ -533,14 +539,14 @@ cloneRecBtn.onclick=async()=>{
         cloneBusy=true;cloneRecBtn.disabled=true;cloneCancelBtn.disabled=true;cloneStat.textContent='正在提取音色…';
         try{
           const audio=await blobToB64(blob);
-          const res=await fetch('/clone_voice',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audio,name:cloneName.value.trim()})});
+          const res=await fetch('/clone_voice',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audio,name:cloneName.value.trim(),consent:cloneConsent.checked,consent_version:consentInfo&&consentInfo.version})});
           const d=await res.json();
           if(!res.ok||!d.ok)throw new Error(d.error||'clone failed');
           await loadVoices(d.voice);
           voiceSel.value=d.voice;
           cloneStat.textContent='音色已生成，已自动切换到 '+d.voice;
           setTimeout(()=>hideClone(),600);
-        }catch(e){cloneBusy=false;cloneRecBtn.disabled=false;cloneCancelBtn.disabled=false;cloneStat.textContent='失败：'+e.message}
+        }catch(e){cloneBusy=false;cloneRecBtn.disabled=!cloneConsent.checked;cloneCancelBtn.disabled=false;cloneStat.textContent='失败：'+e.message}
       };
       cloneRec.start();cloneRecording=true;cloneRecBtn.classList.add('rec');cloneRecBtn.textContent='stop';cloneDeadline=Date.now()+CLONE_MAX_SECS*1000;
       const tick=()=>{

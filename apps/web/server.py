@@ -12,6 +12,7 @@ from baize_v.inference.mimi import frames_to_codes, mask_special, decode_codes
 from baize_v.models.encoders import load_sensevoice, load_vision
 from baize_v.models.summary import log_model_params
 from voices import VoiceRegistry
+from consent import CONSENT_TEXT, CONSENT_VERSION, ConsentError, audio_digest, audit, check_consent
 from baize_v.paths import SENSEVOICE_DIR, SIGLIP_DIR, MIMI_DIR, CAMPPLUS_DIR, SPEAKER_DIR, VAD_PATH
 from baize_v.tokens import AUDIO_PAD_TOKEN
 logging.getLogger().setLevel(logging.ERROR)
@@ -242,11 +243,21 @@ def switch_model():
     except Exception as e:
         return Response(json.dumps({'ok': False, 'error': str(e)}), status=500, mimetype='application/json')
 
+@app.route('/clone_consent', methods=['GET'])
+def clone_consent():
+    return Response(json.dumps({'version': CONSENT_VERSION, 'text': CONSENT_TEXT}, ensure_ascii=False), mimetype='application/json')
+
 @app.route('/clone_voice', methods=['POST'])
 def clone_voice():
     d = request.json or {}
     if not d.get('audio'):
         return Response(json.dumps({'ok': False, 'error': 'missing audio'}), status=400, mimetype='application/json')
+    client = request.remote_addr
+    try:
+        check_consent(d)
+    except ConsentError as e:
+        audit('clone_rejected', client=client, reason=str(e))
+        return Response(json.dumps({'ok': False, 'error': str(e)}), status=403, mimetype='application/json')
     try:
         name = normalize_voice_name(d.get('name'))
         value = build_clone_voice(d['audio'])
@@ -255,6 +266,8 @@ def clone_voice():
         saved[name] = value
         torch.save(saved, out_path)
         register_voice(name, value, group='manual')
+        audit('clone_created', client=client, voice=name, consent_version=CONSENT_VERSION,
+              audio_sha256=audio_digest(base64.b64decode(d['audio'])))
         return Response(json.dumps({'ok': True, 'voice': name, 'path': 'assets/speaker/' + CLONE_FILE}), mimetype='application/json')
     except Exception as e:
         return Response(json.dumps({'ok': False, 'error': str(e)}), status=500, mimetype='application/json')
@@ -267,6 +280,7 @@ def delete_voice():
         return Response(json.dumps({'ok': False, 'error': 'missing name'}), status=400, mimetype='application/json')
     try:
         delete_manual_voice(name)
+        audit('clone_deleted', client=request.remote_addr, voice=name)
         return Response(json.dumps({'ok': True, 'voice': name}), mimetype='application/json')
     except Exception as e:
         return Response(json.dumps({'ok': False, 'error': str(e)}), status=500, mimetype='application/json')

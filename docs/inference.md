@@ -31,6 +31,7 @@ uv run python apps/web/server.py --load_from out --port 7860
 
 - `--load_from`：扫描该目录下包含权重文件的子目录，页面中可切换模型。
 - 音色保存在 `assets/speaker/`，克隆得到的音色写入 `voice_clone.pt`。
+- 克隆前需勾选授权确认，并会写入审计日志，详见 [使用边界与安全说明](safety.md)。
 - 启动时会预热一次模型，首次请求延迟较低。
 
 访问 `http://localhost:7860` 打开页面，页面文件位于 `apps/web/static/web_demo.html`。

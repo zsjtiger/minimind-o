@@ -44,6 +44,7 @@ baize-v/                        （仓库目录名沿用 minimind-o）
 ├── apps/web/                   Web 应用（Flask + WebSocket，支持实时语音通话）
 │   ├── server.py               路由与 RealtimeConnection
 │   ├── voices.py               音色注册表（内置 / 未见 / 克隆）
+│   ├── consent.py              音色克隆授权确认与审计日志
 │   └── static/web_demo.html
 ├── examples/gradio_demo.py     Gradio 非实时示例
 ├── tests/                      pytest 测试
