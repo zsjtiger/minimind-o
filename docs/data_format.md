@@ -9,7 +9,7 @@
 | `conversations` | string（JSON） | 是 | 多轮对话，形如 `[{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]`。`content` 中的 `<image>` 标记图像插入位置 |
 | `question_audios` | list\<binary\> | 否 | 每个 user 轮次对应的音频（wav/mp3 等 `soundfile` 可读的字节），按 user 轮次序号取用 |
 | `answer_audios` | list\<list\<int\>\> | 否 | 每个 assistant 轮次的音频 codec 码，8 层交织存放（帧内顺序：第 0 层、第 1 层……第 7 层） |
-| `image_bytes` | list\<binary\> 或 binary | 否 | 图像字节，只取第一张 |
+| `image_bytes` | list\<binary\> 或 binary | 否 | 图像字节列表，与 `<image>` 标记按顺序对应，每个样本最多使用 `max_images` 张 |
 | `ref_audios` | list\<int\> | 否 | 参考音频的 codec 码（8 层交织），用于音色条件，训练时 50% 概率丢弃 |
 | `spk_emb` | list\<float\>（192 维） | 否 | 说话人向量（CAM++），缺失时用全零 |
 

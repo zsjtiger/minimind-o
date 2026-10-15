@@ -4,7 +4,7 @@
     conversations   JSON 字符串，多轮对话 [{"role", "content"}]；图像用 "<image>" 标记位置
     question_audios list<binary>，按 user 轮次顺序的 wav 字节（16 kHz 单声道 PCM16）
     answer_audios   list<list<int32>>，按 assistant 轮次的 Mimi 8 层交织码（仅语音输出训练需要）
-    image_bytes     list<binary>，图像字节，模型只取第一张
+    image_bytes     list<binary>，图像字节，与 "<image>" 标记按顺序对应
     ref_audios      list<int32>，参考音频的 Mimi 码（音色条件，可为空）
     spk_emb         list<float32>，192 维说话人向量（可为空）
     source          str，数据源名称（用于统计与配比）
@@ -30,11 +30,16 @@ SCHEMA = pa.schema([
 
 def make_record(conversations, *, source, modality, question_audios=None, answer_audios=None,
                 image_bytes=None, ref_audios=None, spk_emb=None):
+    """image_bytes 可以是单张图的字节，也可以是多张图的列表（顺序与 <image> 标记一致）。"""
+    if isinstance(image_bytes, (list, tuple)):
+        images = list(image_bytes)
+    else:
+        images = [image_bytes] if image_bytes else []
     return {
         'conversations': json.dumps(conversations, ensure_ascii=False),
         'question_audios': list(question_audios or []),
         'answer_audios': [list(map(int, a)) for a in (answer_audios or [])],
-        'image_bytes': [image_bytes] if image_bytes else [],
+        'image_bytes': images,
         'ref_audios': list(map(int, ref_audios or [])),
         'spk_emb': list(map(float, spk_emb or [])),
         'source': source,

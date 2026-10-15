@@ -28,7 +28,7 @@ uv run python scripts/prepare_data.py --config configs/data_mix_demo.json # 构�
 | `conversations` | 多轮对话 JSON；图像用 `<image>` 标记位置 |
 | `question_audios` | 每个 user 轮次的 16 kHz 单声道 PCM16 wav 字节 |
 | `answer_audios` | 每个 assistant 轮次的 **Mimi 8 层码本**（仅语音输出训练需要） |
-| `image_bytes` | 图像字节，模型只取第一张 |
+| `image_bytes` | 图像字节列表，顺序与对话中的 `<image>` 标记一一对应；每个样本最多使用 `max_images`（默认 4）张 |
 | `ref_audios` / `spk_emb` | 音色条件，可为空 |
 | `source` / `modality` | 数据源名与模态，用于统计与配比 |
 
@@ -46,7 +46,7 @@ uv run python scripts/prepare_data.py --config configs/data_mix_demo.json # 构�
 | 图文 | DocVQA / InfoVQA / ChartQA / TextVQA | 文档、图表、图中文字问答 | 文档与图表理解 | 文字密集，图像分辨率要求高 |
 | 图文 | ShareGPT4V / LLaVA-Instruct | 高质量描述与指令数据 | 描述能力、指令跟随 | 多为 GPT-4 生成，注意生成模型的许可条款 |
 | 图文 | MMMU / MMBench / MME | 综合评测集 | **仅用于评测** | 不要混入训练数据，避免数据污染 |
-| 视频 | MSR-VTT | 约 1 万段视频、20 万句描述 | 视频描述与检索 | 当前取中间帧作为代表图 |
+| 视频 | MSR-VTT | 约 1 万段视频、20 万句描述 | 视频描述与检索 | 均匀取至多 4 帧，每帧对应一个 `<image>` |
 | 视频 | ActivityNet Captions | 长视频时序片段描述 | 时序定位与描述 | 未实现；需要多帧支持 |
 | 视频 | HowTo100M | 约 1 亿旁白片段 | 弱监督预训练 | 旁白噪声大，需过滤 |
 | 视频 | Kinetics / HMDB51 / UCF101 | 动作识别 | 视觉分类，不含语言 | 本项目不使用 |
@@ -94,7 +94,7 @@ uv run python scripts/prepare_data.py --config configs/data_mix_demo.json # 构�
 7. **去重**：按（对话, 图像, 音频）的 SHA-1 去重。
 8. **流式写入**：按 256 条一批写入 parquet，不把整个数据源放进内存。
 
-视频与多帧：模型每个样本只接收一张图。视频取中间一帧，抽帧命令示例：
+多图与视频：一个样本可以包含多张图，每个 `<image>` 标记依次绑定一张图；多余的标签会被删除，多余的图像会被丢弃。视频按 `max_frames`（默认 4）均匀取帧，每帧一个标签。注意图像占位符每张占 64 个 token，多图会显著增加序列长度，需同时调大 `max_length`。抽帧命令示例：
 
 ```bash
 ffmpeg -i video.mp4 -vf fps=1 dataset/raw/msrvtt/frames/<video_id>/%04d.jpg
@@ -122,7 +122,7 @@ uv run python scripts/prepare_data.py --config configs/data_mix.json --only_mix 
 
 ## 已知限制
 
-- 当前转换器：COCO captions、VQA 风格 jsonl、视频中间帧、语音输入 parquet、纯文本 jsonl、已有 parquet 直通。Visual Genome、LAION/CC、ActivityNet、音频事件数据集未实现。
+- 当前转换器：COCO captions、VQA 风格 jsonl、视频均匀多帧、语音输入 parquet、纯文本 jsonl、已有 parquet 直通。Visual Genome、LAION/CC、ActivityNet、音频事件数据集未实现。
 - 语音输出训练仍依赖 Mimi 码本数据（见上文）。
 - 混合时整个分源文件会读入内存；数据量非常大时需要改为分批混合。
 - 去重只针对完全相同的样本，不处理近似重复（如 LAION 中的近重复图）。

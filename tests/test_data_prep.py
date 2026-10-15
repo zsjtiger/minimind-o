@@ -146,10 +146,11 @@ def test_vqa_builder_skips_missing_images(tmp_path):
     assert stats['written'] == 1
 
 
-def test_video_builder_uses_middle_frame(tmp_path):
+def test_video_builder_keeps_frames_in_order(tmp_path):
     frames = tmp_path / 'frames' / 'v1'
     frames.mkdir(parents=True)
-    for i, c in enumerate([(255, 0, 0), (0, 255, 0), (0, 0, 255)]):
+    colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]
+    for i, c in enumerate(colors):
         (frames / f'{i:04d}.png').write_bytes(_png(color=c))
     (tmp_path / 'msrvtt.jsonl').write_text(json.dumps({'video_id': 'v1', 'caption': 'a video'}) + '\n', encoding='utf-8')
     out = tmp_path / 'video.parquet'
@@ -157,8 +158,17 @@ def test_video_builder_uses_middle_frame(tmp_path):
                         jsonl=str(tmp_path / 'msrvtt.jsonl'), frames_root=str(tmp_path / 'frames'))
     assert stats['written'] == 1
     row = pq.read_table(out).to_pylist()[0]
-    green = Image.open(io.BytesIO(row['image_bytes'][0])).convert('RGB').getpixel((5, 5))
-    assert green[1] > green[0] and green[1] > green[2]   # 中间帧是绿色
+    assert len(row['image_bytes']) == 3
+    assert json.loads(row['conversations'])[0]['content'].count('<image>') == 3
+    px = [Image.open(io.BytesIO(b)).convert('RGB').getpixel((5, 5)) for b in row['image_bytes']]
+    assert [max(range(3), key=lambda k: p[k]) for p in px] == [0, 1, 2]   # 红、绿、蓝
+
+
+def test_video_builder_caps_frames(tmp_path):
+    from baize_v.data.prep.builders import _spread_indices
+    assert _spread_indices(10, 4) == [0, 3, 6, 9]
+    assert _spread_indices(3, 3) == [0, 1, 2]
+    assert _spread_indices(5, 1) == [2]
 
 
 def test_passthrough_converts_existing_parquet(tmp_path):

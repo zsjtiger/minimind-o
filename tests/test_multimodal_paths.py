@@ -109,3 +109,23 @@ def test_convert_script_writes_loadable_directory(tmp_path):
     out = convert_torch2export(str(tmp_path / 'sft.pth'), str(tmp_path / 'out'), cfg, dtype=torch.float32)
     model = load_pretrained(out, audio_encoder_path=MISSING, vision_model_path=MISSING)
     assert model.config.model_type == 'baize_v'
+
+
+def _two_image_ids(batch):
+    ids = torch.randint(0, 6000, (batch, 9, 140))
+    ids[:, :8, :] = 2049
+    ids[:, 8, 3:3 + 64] = IMAGE_MARKER           # 第一张图的 64 个占位
+    ids[:, 8, 70:70 + 64] = IMAGE_MARKER         # 第二张图的 64 个占位
+    return ids
+
+
+@pytest.mark.parametrize('batch', [1, 2])
+def test_second_image_is_injected(mm_model, batch):
+    ids = _two_image_ids(batch)
+    first = torch.rand(batch, 2, 3, 32, 32)
+    second = torch.rand(batch, 2, 3, 32, 32)
+    second[:, 1] = torch.rand(batch, 3, 32, 32)  # 只改第二张图
+    with torch.no_grad():
+        la = mm_model(ids, pixel_values=first).logits
+        lb = mm_model(ids, pixel_values=second).logits
+    assert not torch.allclose(la, lb), '第二张图应被注入（bs=%d）' % batch

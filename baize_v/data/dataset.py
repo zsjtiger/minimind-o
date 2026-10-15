@@ -24,8 +24,9 @@ class OmniDataset(Dataset):
     def __init__(self, data_path, tokenizer, audio_processor=None, vision_processor=None,
                  max_length=1200, audio_special_token='<|audio_pad|>', image_special_token='<|image_pad|>',
                  scheduled_sampling=0.05,
-                 image_token_len=64):
+                 image_token_len=64, max_images=4):
         super().__init__()
+        self.max_images = max_images
         tables = [pa.Table.from_batches(pq.ParquetFile(p.strip()).iter_batches()) for p in data_path.split(',')]
         tables = [t.cast(pa.schema([f.with_type(pa.large_string()) if pa.types.is_string(f.type) else f for f in t.schema])) for t in tables]
         self.table = pa.concat_tables(tables, promote_options='default')
@@ -119,7 +120,7 @@ class OmniDataset(Dataset):
         last_audio_codes = self._answer_codes(cols['answer_audios'], n_asst)
 
         prompt = self.create_chat_prompt(conversations, audio_features_length)
-        if pixel_values is not None: prompt = prompt.replace('<image>', self.image_token)
+        if pixel_values is not None: prompt, pixel_values = self._bind_images(prompt, pixel_values)
         input_ids = self.tokenizer(prompt).input_ids[:self.max_length]
         input_ids += [self.tokenizer.pad_token_id] * (self.max_length - len(input_ids))
 
@@ -176,10 +177,35 @@ class OmniDataset(Dataset):
         return conversations
 
     def _load_pixel_values(self, image_bytes):
-        """只取第一张图；没有图像或没有视觉处理器时返回 None。"""
-        if image_bytes and len(image_bytes) > 0 and self.vision_processor:
-            return self.load_image_inputs(image_bytes[0])
-        return None
+        """最多取 max_images 张图，返回 (n, 3, H, W)；没有图像或没有视觉处理器时返回 None。
+        字典形式的处理器输出（如带 pixel_attention_mask 的 SigLIP2）只支持单图。"""
+        if not image_bytes or not self.vision_processor:
+            return None
+        images = [self.load_image_inputs(b) for b in image_bytes[:self.max_images]]
+        images = [x for x in images if x is not None]
+        if not images:
+            return None
+        if hasattr(images[0], 'keys'):
+            return images[0]
+        return torch.cat(images, dim=0)
+
+    def _bind_images(self, prompt, pixel_values):
+        """按顺序把 <image> 标签绑定到图像：前 n 个标签换成图像占位符，多余的标签删除，多余的图像丢弃。
+        没有任何标签时保持原样（保证 batch 内样本数对齐）。"""
+        if hasattr(pixel_values, 'keys'):
+            n_images = 1
+        else:
+            n_images = pixel_values.shape[0]
+        parts = prompt.split('<image>')
+        if len(parts) == 1:
+            return prompt, pixel_values
+        used = min(n_images, len(parts) - 1)
+        out = parts[0]
+        for i, part in enumerate(parts[1:]):
+            out += (self.image_token if i < used else '') + part
+        if not hasattr(pixel_values, 'keys'):
+            pixel_values = pixel_values[:used]
+        return out, pixel_values
 
     def _load_question_audio(self, question_audios, n_user):
         """只加载最后一个 user 轮次的音频。返回 (audio_inputs, audio_len, 占位长度)。"""

@@ -21,11 +21,24 @@ def omni_collate_fn(batch):
             keys = set.intersection(*[set(d.keys()) for d in valid_images])
             pixel_values = {k: torch.cat([d[k] for d in valid_images], dim=0) for k in keys}
         else:
-            pixel_values = torch.cat(valid_images, dim=0)
+            pixel_values = _stack_images(valid_images)
     else:
         pixel_values = None
     spk_emb = torch.stack(spk_emb)
     return input_ids, labels, audio_labels, audio_inputs, audio_lens, pixel_values, spk_emb
+
+
+def _stack_images(per_sample):
+    """每个样本是 (n_i, 3, H, W)，图像数可不同：补零到同一个 n 后堆成 (B, N, 3, H, W)。
+    全零的图像在模型里会被跳过（编码结果为零且不被注入），因此补零是安全的。"""
+    n_max = max(p.shape[0] for p in per_sample)
+    padded = []
+    for p in per_sample:
+        if p.shape[0] < n_max:
+            pad = p.new_zeros(n_max - p.shape[0], *p.shape[1:])
+            p = torch.cat([p, pad], dim=0)
+        padded.append(p)
+    return torch.stack(padded, dim=0)
 
 
 def vlm_collate_fn(batch):

@@ -59,10 +59,17 @@ def vqa_jsonl(jsonl, image_dir, **_):
                    'image': _read_bytes(path), 'modality': 'image_text'}
 
 
-def video_caption_frames(jsonl, frames_root, **_):
+def _spread_indices(n, k):
+    """在 [0, n) 中均匀取 k 个互不相同的下标（k <= n）。"""
+    if k <= 1:
+        return [n // 2]
+    return [round(i * (n - 1) / (k - 1)) for i in range(k)]
+
+
+def video_caption_frames(jsonl, frames_root, max_frames=4, **_):
     """视频描述：每行 {"video_id": ..., "caption": ...}；frames_root/<video_id>/ 下为已抽好的帧。
 
-    模型目前每个样本只接收一张图，因此取中间一帧作为代表帧。
+    均匀取至多 max_frames 帧，每帧在对话中对应一个 <image> 标记。
     抽帧示例：ffmpeg -i video.mp4 -vf fps=1 frames_root/<video_id>/%04d.jpg
     """
     with open(jsonl, encoding='utf-8') as f:
@@ -74,10 +81,11 @@ def video_caption_frames(jsonl, frames_root, **_):
             frames = sorted(x for x in os.listdir(folder) if x.lower().endswith(IMAGE_EXTS))
             if not frames:
                 continue
-            middle = frames[len(frames) // 2]
-            yield {'conversations': [{'role': 'user', 'content': '<image>\nDescribe this video.'},
+            picks = _spread_indices(len(frames), min(max_frames, len(frames)))
+            tags = ''.join('<image>\n' for _ in picks)
+            yield {'conversations': [{'role': 'user', 'content': tags + 'Describe this video.'},
                                      {'role': 'assistant', 'content': row['caption']}],
-                   'image': _read_bytes(os.path.join(folder, middle)), 'modality': 'video_text'}
+                   'image': [_read_bytes(os.path.join(folder, frames[i])) for i in picks], 'modality': 'video_text'}
 
 
 def _audio_bytes(cell):
@@ -123,13 +131,17 @@ BUILDERS = {
 
 
 def _prepare_media(raw, stats):
-    """图像与音频的标准化；失败的样本计入 stats。返回 (image_bytes, question_audios) 或 None。"""
-    image = None
+    """图像与音频的标准化；任一图像损坏则丢弃整个样本，避免 <image> 标记与图像错位。
+    返回 (image_list, question_audios) 或 None。"""
+    images = []
     if raw.get('image') is not None:
-        image = normalize_image(raw['image'])
-        if image is None:
-            stats['drop_bad_image'] += 1
-            return None
+        sources = raw['image'] if isinstance(raw['image'], (list, tuple)) else [raw['image']]
+        for src in sources:
+            img = normalize_image(src)
+            if img is None:
+                stats['drop_bad_image'] += 1
+                return None
+            images.append(img)
     audios = []
     if raw.get('question_audio') is not None:
         wav = normalize_audio(raw['question_audio'])
@@ -137,7 +149,7 @@ def _prepare_media(raw, stats):
             stats['drop_bad_audio'] += 1
             return None
         audios = [wav]
-    return image, audios
+    return images, audios
 
 
 def run_builder(name, out_path, source, modality=None, min_chars=2, max_chars=2000, **args):
@@ -158,12 +170,12 @@ def run_builder(name, out_path, source, modality=None, min_chars=2, max_chars=20
         media = _prepare_media(raw, stats)
         if media is None:
             continue
-        image, audios = media
-        if not dedup.is_new(json.dumps(conv, ensure_ascii=False), image or b'', audios[0] if audios else b''):
+        images, audios = media
+        if not dedup.is_new(json.dumps(conv, ensure_ascii=False), b''.join(images), audios[0] if audios else b''):
             stats['drop_duplicate'] += 1
             continue
         rec = make_record(conv, source=source, modality=modality or raw.get('modality', 'text'),
-                          image_bytes=image, question_audios=audios)
+                          image_bytes=images, question_audios=audios)
         errors = validate_record(rec)
         if errors:
             stats['drop_invalid'] += 1
@@ -183,7 +195,7 @@ def convert_parquet(parquet, out_path, source, modality, **_):
             stats['read'] += 1
             rec = make_record(json.loads(row['conversations']), source=source, modality=modality,
                               question_audios=row.get('question_audios'), answer_audios=row.get('answer_audios'),
-                              image_bytes=(row.get('image_bytes') or [None])[0], ref_audios=row.get('ref_audios'),
+                              image_bytes=row.get('image_bytes') or None, ref_audios=row.get('ref_audios'),
                               spk_emb=row.get('spk_emb'))
             if validate_record(rec):
                 stats['drop_invalid'] += 1
