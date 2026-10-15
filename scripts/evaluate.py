@@ -20,6 +20,7 @@ from baize_v.models import BaizeOmni
 from baize_v.data import OmniDataset
 from baize_v.inference.mimi import frames_to_codes, mask_special, decode_codes
 from baize_v.models.summary import log_model_params, report_load_result
+from baize_v.models.llm import remap_legacy_state_dict
 from baize_v.paths import TOKENIZER_DIR, SENSEVOICE_DIR, SIGLIP_DIR, MIMI_DIR, OUT_DIR, EVAL_AUDIO_DIR, SPEAKER_DIR
 from baize_v.train.dist import setup_seed
 
@@ -36,10 +37,12 @@ def init_model(args):
         moe_suffix = '_moe' if args.use_moe else ''
         ckp = os.path.join(args.save_dir, f'{args.weight}_{args.hidden_size}{moe_suffix}.pth')
         model = BaizeOmni(
-            OmniConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=bool(args.use_moe)),
+            OmniConfig(hidden_size=args.hidden_size, use_moe=bool(args.use_moe), prelude_layers=args.prelude_layers,
+                       coda_layers=args.coda_layers, max_loop_iters=args.max_loop_iters),
             audio_encoder_path=SENSEVOICE_DIR, vision_model_path=SIGLIP_DIR,
         )
-        report_load_result(model.load_state_dict(torch.load(ckp, map_location=args.device), strict=False), label=os.path.basename(ckp))
+        state = remap_legacy_state_dict(torch.load(ckp, map_location=args.device), model.config)
+        report_load_result(model.load_state_dict(state, strict=False), label=os.path.basename(ckp))
     else:
         model = AutoModelForCausalLM.from_pretrained(args.load_from, trust_remote_code=True)
         model.audio_encoder, model.audio_processor = BaizeOmni.load_sensevoice(SENSEVOICE_DIR)
@@ -235,7 +238,9 @@ def parse_args():
     parser.add_argument('--save_dir', default=OUT_DIR, type=str, help="模型权重目录")
     parser.add_argument('--weight', default='sft_omni', type=str, help="权重名称前缀")
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
-    parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
+    parser.add_argument('--prelude_layers', default=2, type=int, help="循环前的 Prelude 层数 P")
+    parser.add_argument('--coda_layers', default=2, type=int, help="循环后的 Coda 层数 C")
+    parser.add_argument('--max_loop_iters', default=8, type=int, help="循环圈数 T")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构")
     parser.add_argument('--max_new_tokens', default=512, type=int, help="最大生成长度")
     parser.add_argument('--temperature', default=0.7, type=float, help="Thinker生成温度")

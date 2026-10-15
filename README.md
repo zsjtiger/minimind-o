@@ -254,7 +254,7 @@ Thinker 负责统一接收文本、语音和图像信息，并生成语义层面
 
 ## Ⅲ 中间层 Bridge
 
-Thinker 向 Talker 传递的表征取自中间层，而不是 embedding 层或最后一层。embedding 层语义信息不足，最后一层又更贴近 next-token prediction 目标；中间层通常已经融合了上下文和跨模态信息，同时还没有被 LM head 过度塑形，更适合作为语音生成的条件。默认 `bridge_layer = num_hidden_layers // 2 - 1`，不同规模下也可以通过配置调整。
+Thinker 向 Talker 传递的表征取自循环块的输出（Prelude 与 Coda 之间），而不是 embedding 层或最后一层。embedding 层语义信息不足，最后一层又更贴近 next-token prediction 目标；循环块的输出已经融合了上下文和跨模态信息，同时还没有被 Coda 与 LM head 过度塑形，更适合作为语音生成的条件。
 
 ## Ⅳ Talker 侧语音生成
 

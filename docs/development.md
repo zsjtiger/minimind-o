@@ -66,6 +66,11 @@ uv run ruff check baize_v tests scripts
 
 结构调整时可以用同一个 tiny 配置，在改动前后分别导出 `state_dict` 的键名和同种子下的前向输出，比较两者是否完全相同。这套方法已经用于本次迁移（96 个键、logits 逐元素一致）。
 
+## 主干结构变更记录
+
+- 循环深度 Transformer（RDT）改造：键名基准 `tests/fixtures/omni_tiny_state_dict.json` 已按新结构重新生成。这是有意的结构变更，见 [migration.md](migration.md#主干改为循环深度结构rdt)。
+- `tests/test_rdt.py` 覆盖：每圈 KV cache 与整段前向一致（ACT 开/关）、LTI 稳定性、圈数影响输出、深度外推、梯度回传到共享循环块、旧权重映射。
+
 ## 重构与修复记录
 
 以下事项已在本轮完成，并用固定种子比对模型输出与数据样本，确保行为不变或有意说明：

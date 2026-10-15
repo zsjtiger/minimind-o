@@ -28,6 +28,8 @@ bash scripts/recipes/mini.sh          # 单卡 mini 数据集
 | `--mode` | `all` | `all` 全量训练；`audio_proj` 只训练音频 projector；`vision_proj` 只训练视觉 projector |
 | `--freeze_backbone` | `none` | `none` 不冻结；`all` 冻结主干；`last1` 只训练最后一层 |
 | `--from_resume` | `0` | 设为 `1` 时从 `checkpoints/` 中的续训文件恢复 |
+| `--prelude_layers` / `--coda_layers` | `2` / `2` | 循环前 / 后的标准层数 P、C |
+| `--max_loop_iters` | `8` | 循环圈数 T |
 | `--max_seq_len` | `512` | 样本截断长度 |
 | `--batch_size` | `32` | 单卡 batch size |
 | `--learning_rate` | `5e-4` | 峰值学习率，按余弦曲线衰减到 0.1 倍 |

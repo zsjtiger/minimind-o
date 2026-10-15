@@ -7,6 +7,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from baize_v.config import OmniConfig
 from baize_v.models import BaizeOmni
 from baize_v.models.summary import report_load_result
+from baize_v.models.llm import remap_legacy_state_dict
 from baize_v.paths import TOKENIZER_DIR, SENSEVOICE_DIR, SIGLIP_DIR, OUT_DIR
 
 warnings.filterwarnings('ignore', category=UserWarning)
@@ -17,6 +18,7 @@ def convert_torch2transformers(torch_path, transformers_path, lm_config, dtype=t
     BaizeOmni.register_for_auto_class("AutoModelForCausalLM")
     model = BaizeOmni(lm_config, audio_encoder_path=SENSEVOICE_DIR, vision_model_path=SIGLIP_DIR)
     state_dict = torch.load(torch_path, map_location='cpu')
+    state_dict = remap_legacy_state_dict(state_dict, lm_config)
     report_load_result(model.load_state_dict(state_dict, strict=False), label=os.path.basename(torch_path))
     model = model.to(dtype)
     params = sum(p.numel() for p in model.parameters()) / 1e6
@@ -44,7 +46,7 @@ def convert_transformers2torch(transformers_path, torch_path):
 
 
 if __name__ == '__main__':
-    lm_config = OmniConfig(hidden_size=768, num_hidden_layers=8, use_moe=False)
+    lm_config = OmniConfig(hidden_size=768, use_moe=False, prelude_layers=2, coda_layers=2, max_loop_iters=8)
     torch_path = os.path.join(OUT_DIR, f"sft_omni_{lm_config.hidden_size}{'_moe' if lm_config.use_moe else ''}.pth")
     transformers_path = os.path.join(OUT_DIR, 'baize-v')
     convert_torch2transformers(torch_path, transformers_path, lm_config)

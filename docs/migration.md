@@ -87,3 +87,13 @@ uv run python scripts/evaluate.py --help
 - 加载权重时会打印缺失和多余的参数数量。
 - SwanLab 参数改为 `--use_swanlab` / `--swanlab_project`，旧参数仍可用。
 - Web 服务切换模型时不再重复加载编码器。
+
+## 主干改为循环深度结构（RDT）
+
+thinker 从 `num_hidden_layers` 层的平铺堆叠改为 `prelude_layers` + 共享循环块 + `coda_layers`，参考 LLMBaize/baize。
+
+- **命令行**：`--num_hidden_layers` 已移除，改用 `--prelude_layers`（默认 2）、`--coda_layers`（默认 2）、`--max_loop_iters`（默认 8）。
+- **旧权重**：`baize_v.models.llm.remap_legacy_state_dict` 会把旧的 `model.layers.*` 映射到新结构：第 0..P-1 层 → prelude，第 P 层 → 循环块，最后 C 层 → coda，中间层丢弃。新增的 LTI、LoRA、ACT 与圈数归一化参数不在旧权重中，保持随机初始化，加载时会打印缺失键。`init`、续训、评测、转换脚本都会自动做这一映射。
+- **效果**：映射后的模型与旧模型不再等价，属于结构变更。建议用旧权重作为起点继续训练，而不是期望推理结果不变。
+- **续训文件**：新结构的续训文件与旧版键名不同，旧文件会经过映射后再加载，但优化器状态无法对齐，建议从权重重新开始。
+- **参数量**：默认配置下 thinker 只保存 1 份循环块权重，层数由 8 层降为 P + 1 + C = 5 份，参数量相应减少。

@@ -82,8 +82,41 @@ baize_v.train  ·  baize_v.inference  ·  baize_v.data
 - `inference/realtime.py` 只依赖 `onnxruntime`，与模型解耦。
 - 入口脚本不包含业务逻辑，便于在 notebook 或其他服务中直接调用 `baize_v`。
 
+## 主干：循环深度 Transformer（RDT）
+
+文本主干（thinker）采用循环深度结构，参考 [LLMBaize/baize](https://github.com/LLMBaize/baize) 的 Recurrent-Depth Transformer 实现：
+
+```text
+tokens → embed → [Prelude × P] → e ──┐
+                                      ▼
+                     ┌──── Recurrent Block（共享权重，循环 T 圈）────┐
+                     │  h ← A·h + B·e + Block(RMSNorm(h+e)) + LoRA_t(RMSNorm(h+e))  │
+                     └───────────────────────────────────────────┘
+                                      ▼ bridge（循环块输出，供 talker 使用）
+                                [Coda × C] → final norm → lm_head
+```
+
+| 机制 | 实现 | 位置 |
+| --- | --- | --- |
+| 输入注入 | Prelude 输出 `e` 在每圈重新注入，防止隐状态随圈数漂移 | `RecurrentBlock.forward` |
+| LTI 稳定注入 | `A = exp(-exp(log_dt + log_A)) ∈ (0,1)`，谱半径小于 1 由参数化保证 | `LTIInjection` |
+| 圈数嵌入 | 正弦嵌入加到前 D/8 通道，让共享权重在不同圈执行不同功能 | `loop_index_embedding` |
+| 深度 LoRA | 跨圈共享 `down` / `B`，每圈一个 scale；超过训练圈数时 scale 钳制到最后一圈 | `LoRAAdapter` |
+| ACT 早停 | 每位置预测停机概率并加权累积各圈隐状态；ponder cost 鼓励早停 | `ACTHalting`，`act_*` 配置 |
+| 每圈 KV cache | 扁平列表顺序为 `[prelude…, 第 0..T-1 圈, coda…]`，解码时各圈各自缓存 | `BaizeModel.backbone` |
+
+与 LLMBaize 的差异：
+
+- 注意力与 FFN 沿用本项目的 `Attention` / `FeedForward` / `MOEFeedForward`，只复用 RDT 的循环与注入机制，没有引入 MLA 与 FSDP。
+- 循环块的 FFN 与 Prelude/Coda 一致（由 `use_moe` 决定），没有强制使用 MoE。
+- 没有梯度检查点（`grad_checkpointing`）。
+
+talker 的桥接信号由“中间层输出”改为“循环块输出”，talker 本身仍是标准的堆叠层。
+
+配置项见 `BaizeConfig`：`prelude_layers`（P）、`coda_layers`（C）、`max_loop_iters`（T）、`lora_rank`、`use_act`、`act_threshold`、`act_init_bias`、`act_ponder_coef`、`loop_emb_frac`。
+
 ## 关键约定
 
 - **路径**：所有默认路径来自 `baize_v/paths.py`，以仓库根目录为基准，与当前工作目录无关。外部权重目录可用环境变量 `BAIZE_PRETRAINED_DIR` 覆盖。
-- **权重键名**：`thinker`、`talker`、`audio_proj`、`vision_proj`、`lm_head` 等属性名属于 checkpoint 格式的一部分，不能随意重命名。`tests/fixtures/omni_tiny_state_dict.json` 记录了完整键名与形状，`tests/test_model.py` 会校验。
+- **权重键名**：`thinker`、`talker`、`audio_proj`、`vision_proj`、`lm_head` 等属性名属于 checkpoint 格式的一部分，不能随意重命名。thinker 的键名为 `model.prelude.*`、`model.recurrent.*`、`model.coda.*`。`tests/fixtures/omni_tiny_state_dict.json` 记录了完整键名与形状，`tests/test_model.py` 会校验。
 - **模型类型**：`OmniConfig.model_type = "baize_v"` 保持不变，已导出的 transformers 模型依赖它识别。

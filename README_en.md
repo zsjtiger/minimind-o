@@ -253,7 +253,7 @@ Thinker receives text, speech and image information uniformly and produces a sem
 
 ## Ⅲ Middle-layer Bridge
 
-The representation passed from Thinker to Talker is taken from a middle layer rather than the embedding layer or the final layer. Embedding layers carry too little semantic information, while the final layer is overly shaped towards next-token prediction. A middle layer typically already fuses contextual and cross-modal information without being over-tuned by the LM head, which makes it a better conditioning source for speech generation. By default `bridge_layer = num_hidden_layers // 2 - 1`, and it can be adjusted through configuration at different scales.
+The representation passed from Thinker to Talker is taken from the output of the recurrent block (between Prelude and Coda), rather than the embedding layer or the final layer. Embedding layers carry too little semantic information, while the final layer is overly shaped towards next-token prediction. The recurrent block output already fuses contextual and cross-modal information without being over-tuned by the Coda and the LM head, which makes it a better conditioning source for speech generation.
 
 ## Ⅳ Speech generation on the Talker side
 

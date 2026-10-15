@@ -23,91 +23,162 @@
 6400,
 64
 ],
+"model.coda.0.input_layernorm.weight": [
+64
+],
+"model.coda.0.mlp.down_proj.weight": [
+64,
+256
+],
+"model.coda.0.mlp.gate_proj.weight": [
+256,
+64
+],
+"model.coda.0.mlp.up_proj.weight": [
+256,
+64
+],
+"model.coda.0.post_attention_layernorm.weight": [
+64
+],
+"model.coda.0.self_attn.k_norm.weight": [
+16
+],
+"model.coda.0.self_attn.k_proj.weight": [
+32,
+64
+],
+"model.coda.0.self_attn.o_proj.weight": [
+64,
+64
+],
+"model.coda.0.self_attn.q_norm.weight": [
+16
+],
+"model.coda.0.self_attn.q_proj.weight": [
+64,
+64
+],
+"model.coda.0.self_attn.v_proj.weight": [
+32,
+64
+],
 "model.embed_tokens.weight": [
 6400,
 64
 ],
-"model.layers.0.input_layernorm.weight": [
-64
-],
-"model.layers.0.mlp.down_proj.weight": [
-64,
-256
-],
-"model.layers.0.mlp.gate_proj.weight": [
-256,
-64
-],
-"model.layers.0.mlp.up_proj.weight": [
-256,
-64
-],
-"model.layers.0.post_attention_layernorm.weight": [
-64
-],
-"model.layers.0.self_attn.k_norm.weight": [
-16
-],
-"model.layers.0.self_attn.k_proj.weight": [
-32,
-64
-],
-"model.layers.0.self_attn.o_proj.weight": [
-64,
-64
-],
-"model.layers.0.self_attn.q_norm.weight": [
-16
-],
-"model.layers.0.self_attn.q_proj.weight": [
-64,
-64
-],
-"model.layers.0.self_attn.v_proj.weight": [
-32,
-64
-],
-"model.layers.1.input_layernorm.weight": [
-64
-],
-"model.layers.1.mlp.down_proj.weight": [
-64,
-256
-],
-"model.layers.1.mlp.gate_proj.weight": [
-256,
-64
-],
-"model.layers.1.mlp.up_proj.weight": [
-256,
-64
-],
-"model.layers.1.post_attention_layernorm.weight": [
-64
-],
-"model.layers.1.self_attn.k_norm.weight": [
-16
-],
-"model.layers.1.self_attn.k_proj.weight": [
-32,
-64
-],
-"model.layers.1.self_attn.o_proj.weight": [
-64,
-64
-],
-"model.layers.1.self_attn.q_norm.weight": [
-16
-],
-"model.layers.1.self_attn.q_proj.weight": [
-64,
-64
-],
-"model.layers.1.self_attn.v_proj.weight": [
-32,
-64
-],
 "model.norm.weight": [
+64
+],
+"model.prelude.0.input_layernorm.weight": [
+64
+],
+"model.prelude.0.mlp.down_proj.weight": [
+64,
+256
+],
+"model.prelude.0.mlp.gate_proj.weight": [
+256,
+64
+],
+"model.prelude.0.mlp.up_proj.weight": [
+256,
+64
+],
+"model.prelude.0.post_attention_layernorm.weight": [
+64
+],
+"model.prelude.0.self_attn.k_norm.weight": [
+16
+],
+"model.prelude.0.self_attn.k_proj.weight": [
+32,
+64
+],
+"model.prelude.0.self_attn.o_proj.weight": [
+64,
+64
+],
+"model.prelude.0.self_attn.q_norm.weight": [
+16
+],
+"model.prelude.0.self_attn.q_proj.weight": [
+64,
+64
+],
+"model.prelude.0.self_attn.v_proj.weight": [
+32,
+64
+],
+"model.recurrent.act.halt.bias": [
+1
+],
+"model.recurrent.act.halt.weight": [
+1,
+64
+],
+"model.recurrent.injection.B": [
+64
+],
+"model.recurrent.injection.log_A": [
+64
+],
+"model.recurrent.injection.log_dt": [
+1
+],
+"model.recurrent.input_layernorm.weight": [
+64
+],
+"model.recurrent.lora.B": [
+8,
+64
+],
+"model.recurrent.lora.down.weight": [
+8,
+64
+],
+"model.recurrent.lora.scale.weight": [
+3,
+8
+],
+"model.recurrent.mlp.down_proj.weight": [
+64,
+256
+],
+"model.recurrent.mlp.gate_proj.weight": [
+256,
+64
+],
+"model.recurrent.mlp.up_proj.weight": [
+256,
+64
+],
+"model.recurrent.norm.weight": [
+64
+],
+"model.recurrent.post_attention_layernorm.weight": [
+64
+],
+"model.recurrent.self_attn.k_norm.weight": [
+16
+],
+"model.recurrent.self_attn.k_proj.weight": [
+32,
+64
+],
+"model.recurrent.self_attn.o_proj.weight": [
+64,
+64
+],
+"model.recurrent.self_attn.q_norm.weight": [
+16
+],
+"model.recurrent.self_attn.q_proj.weight": [
+64,
+64
+],
+"model.recurrent.self_attn.v_proj.weight": [
+32,
 64
 ],
 "talker.audio_scale": [],

@@ -108,7 +108,8 @@ class BaizeOmni(BaizeForCausalLM):
             batch_size, _, seq_length = input_ids.shape
             text_ids, audio_ids = input_ids[:, 8, :], input_ids[:, :8, :]
         if hasattr(past_key_values, 'layers'): past_key_values = None
-        n_thinker, n_talker = len(self.thinker.layers), len(self.talker.layers)
+        n_loops = args.get('n_loops', None)
+        n_thinker, n_talker = self.thinker.num_cache_slots(n_loops), len(self.talker.layers)
         past_key_values = past_key_values or ([None] * (n_thinker + n_talker))
         start_pos = past_key_values[0][0].shape[1] if past_key_values[0] is not None else 0
         # Recompute RoPE buffers lost during meta-device init (transformers>=5.x)
@@ -144,11 +145,10 @@ class BaizeOmni(BaizeForCausalLM):
                     for i in range(num)
                 ], dim=stack_dim)
             hidden_states = self.inject_vision_features(tokens=text_ids, h=hidden_states, vision_tensors=vision_tensors, seqlen=seq_length)
-        bridge_states = hidden_states
-        for i, (layer, past_key_value) in enumerate(zip(self.thinker.layers, past_key_values[:n_thinker])):
-            hidden_states, present = layer(hidden_states, position_embeddings, past_key_value=past_key_value, use_cache=use_cache, attention_mask=attention_mask)
-            presents.append(present)
-            if i == self.config.bridge_layer: bridge_states = hidden_states
+        # 循环块输出作为 talker 的桥接信号；thinker 的 MoE aux 与 ponder cost 一并返回
+        hidden_states, bridge_states, thinker_presents, thinker_aux = self.thinker.backbone(
+            hidden_states, position_embeddings, past_key_values[:n_thinker], use_cache, attention_mask, n_loops)
+        presents += thinker_presents
         h_thinker = self.thinker.norm(hidden_states)
 
         # ======= Talker: thinker hidden + audio codes, output audio logits =======
@@ -165,7 +165,7 @@ class BaizeOmni(BaizeForCausalLM):
         h_talker = self.talker.norm(hidden_states)
 
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
-        aux_loss = sum(l.mlp.aux_loss for l in list(self.thinker.layers) + list(self.talker.layers) if isinstance(l.mlp, MOEFeedForward))
+        aux_loss = thinker_aux + sum((l.mlp.aux_loss for l in self.talker.layers if isinstance(l.mlp, MOEFeedForward)), h_talker.new_zeros(()))
         aux_loss += unused_param_anchor(self.audio_proj, self.vision_proj, self.talker.lm_head.adapters, self.talker.spk_proj)
         text_logits = self.thinker.lm_head(h_thinker[:, slice_indices, :])
         audio_logits = self.talker.lm_head(h_talker[:, slice_indices, :])

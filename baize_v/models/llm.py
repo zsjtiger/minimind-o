@@ -157,46 +157,231 @@ class BaizeBlock(nn.Module):
         hidden_states = hidden_states + self.mlp(self.post_attention_layernorm(hidden_states))
         return hidden_states, present_key_value
 
-class BaizeModel(nn.Module):
+def loop_index_embedding(h: torch.Tensor, loop_t: int, loop_dim: int, theta: float = 10000.0):
+    """圈数正弦嵌入：加到 h 的前 loop_dim 个通道（类 RoPE，作用于循环深度），让共享权重在不同圈执行不同功能。"""
+    freqs = 1.0 / (theta ** (torch.arange(0, loop_dim, 2, device=h.device, dtype=h.dtype) / loop_dim))
+    angles = loop_t * freqs
+    emb = torch.cat([angles.sin(), angles.cos()], dim=-1)[:loop_dim]
+    full = torch.zeros(h.shape[-1], device=h.device, dtype=h.dtype)
+    full[:loop_dim] = emb
+    return h + full
+
+
+class LoRAAdapter(nn.Module):
+    """深度 LoRA：跨圈共享 down / B，每圈一个 scale 向量。推理圈数超过训练圈数时 scale 钳制到最后一圈（深度外推）。"""
+
+    def __init__(self, dim: int, rank: int, max_loops: int):
+        super().__init__()
+        self.down = nn.Linear(dim, rank, bias=False)
+        self.B = nn.Parameter(torch.randn(rank, dim) * 0.02)
+        self.scale = nn.Embedding(max_loops, rank)
+
+    def forward(self, x, loop_t: int):
+        t_idx = min(loop_t, self.scale.num_embeddings - 1)
+        s = self.scale(torch.tensor(t_idx, device=x.device))
+        return (self.down(x) * s) @ self.B
+
+
+class LTIInjection(nn.Module):
+    """LTI 稳定注入：h' = A·h + B·e + f，A = exp(-exp(log_dt + log_A)) ∈ (0, 1)。
+
+    谱半径 ρ(A) < 1 由参数化保证，与训练动态无关；log 空间计算避免 0·inf。
+    """
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.log_A = nn.Parameter(torch.zeros(dim))
+        self.log_dt = nn.Parameter(torch.zeros(1))
+        self.B = nn.Parameter(torch.ones(dim) * 0.1)
+
+    def get_A(self):
+        return torch.exp(-torch.exp((self.log_dt + self.log_A).clamp(-20, 20)))
+
+    def forward(self, h, e, f):
+        return self.get_A() * h + self.B * e + f
+
+
+class ACTHalting(nn.Module):
+    """每位置停机概率预测器。"""
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.halt = nn.Linear(dim, 1)
+
+    def forward(self, h):
+        return torch.sigmoid(self.halt(h)).squeeze(-1)  # [B, T]
+
+
+class RecurrentBlock(nn.Module):
+    """共享权重的循环块：一次前向跑 n_loops 圈。
+
+    单圈更新：h_{t+1} = A·h_t + B·e + Block(RMSNorm(h_t + e)) + LoRA_t(RMSNorm(h_t + e))
+    每圈一份 KV cache（past_key_values[t]），解码时各圈深度各自缓存。
+    子模块命名与 BaizeBlock 一致（self_attn / input_layernorm / post_attention_layernorm / mlp），
+    便于从扁平层的旧权重迁移。
+    """
+
     def __init__(self, config: BaizeConfig):
         super().__init__()
         self.config = config
-        self.vocab_size, self.num_hidden_layers = config.vocab_size, config.num_hidden_layers
+        self.max_loops = config.max_loop_iters
+        self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.self_attn = Attention(config)
+        self.mlp = FeedForward(config) if not config.use_moe else MOEFeedForward(config)
+        self.injection = LTIInjection(config.hidden_size)
+        self.act = ACTHalting(config.hidden_size)
+        self.lora = LoRAAdapter(config.hidden_size, config.lora_rank, config.max_loop_iters)
+        self.loop_dim = max(2, int(config.hidden_size * config.loop_emb_frac))
+
+    def _loop_step(self, h, e, position_embeddings, t, past_kv, use_cache, attention_mask):
+        h_loop = loop_index_embedding(h, t, self.loop_dim)
+        x = self.norm(h_loop + e)
+        attn_out, present = self.self_attn(self.input_layernorm(x), position_embeddings, past_kv, use_cache, attention_mask)
+        f = attn_out + self.mlp(self.post_attention_layernorm(x))
+        f = f + self.lora(x, t)
+        return self.injection(h, e, f), present
+
+    def forward(self, e, position_embeddings, past_key_values=None, use_cache=False, attention_mask=None, n_loops=None):
+        """e: Prelude 输出（冻结注入信号）。返回 (h_out, presents, moe_aux, ponder_cost)。"""
+        n_loops = n_loops or self.max_loops
+        bsz, seq_len, _ = e.shape
+        h = e
+        halted = torch.zeros(bsz, seq_len, device=e.device, dtype=torch.bool)
+        cumulative_p = torch.zeros(bsz, seq_len, device=e.device)
+        n_updates = torch.zeros(bsz, seq_len, device=e.device)
+        remainders = torch.zeros(bsz, seq_len, device=e.device)
+        h_out = torch.zeros_like(h)
+        presents, moe_aux = [], []
+
+        for t in range(n_loops):
+            past_kv = past_key_values[t] if past_key_values is not None else None
+            h, present = self._loop_step(h, e, position_embeddings, t, past_kv, use_cache, attention_mask)
+            presents.append(present)
+            if isinstance(self.mlp, MOEFeedForward):
+                moe_aux.append(self.mlp.aux_loss)
+
+            if self.config.use_act:
+                p = self.act(h)
+                still_running = (~halted).float()
+                remainder = (1.0 - cumulative_p).clamp(min=0)
+                # 最后一圈仍未停机的位置把剩余概率补满，保证各圈权重之和为 1
+                stop_now = (cumulative_p + p >= self.config.act_threshold) | (t == n_loops - 1)
+                weight = torch.where(stop_now, remainder, p) * still_running
+                h_out = h_out + weight.unsqueeze(-1).to(h.dtype) * h
+                n_updates = n_updates + still_running
+                remainders = remainders + torch.where(stop_now, remainder, torch.zeros_like(remainder)) * still_running
+                cumulative_p = cumulative_p + p * still_running
+                halted = halted | stop_now
+                # 缓存模式下必须跑满所有圈，保证每圈 KV 长度一致
+                if not use_cache and halted.all():
+                    break
+            else:
+                h_out = h
+                n_updates = n_updates + 1
+
+        moe_loss = torch.stack(moe_aux).mean() if moe_aux else e.new_zeros(())
+        # ponder cost = N + R：N 不可导（计数），R 对停机前各圈 p 有梯度
+        ponder = (n_updates + remainders).mean() if self.config.use_act else e.new_zeros(())
+        return h_out, presents, moe_loss, ponder
+
+
+class BaizeModel(nn.Module):
+    """RDT 主干：Embedding → Prelude(P) → Recurrent(循环 T 圈) → Coda(C) → final norm。
+
+    KV cache 为扁平列表，顺序：[prelude_0..P-1, 循环第 0..T-1 圈, coda_0..C-1]。
+    """
+    def __init__(self, config: BaizeConfig):
+        super().__init__()
+        self.config = config
+        self.vocab_size = config.vocab_size
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
         self.dropout = nn.Dropout(config.dropout)
-        self.layers = nn.ModuleList([BaizeBlock(l, config) for l in range(self.num_hidden_layers)])
+        self.prelude = nn.ModuleList([BaizeBlock(i, config) for i in range(config.prelude_layers)])
+        self.recurrent = RecurrentBlock(config)
+        self.coda = nn.ModuleList([BaizeBlock(i, config) for i in range(config.coda_layers)])
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         freqs_cos, freqs_sin = precompute_freqs_cis(dim=config.head_dim, end=config.max_position_embeddings, rope_base=config.rope_theta, rope_scaling=config.rope_scaling)
         self.register_buffer("freqs_cos", freqs_cos, persistent=False)
         self.register_buffer("freqs_sin", freqs_sin, persistent=False)
         self._rope_checked = False
 
-    def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, **kwargs):
+    def num_cache_slots(self, n_loops=None):
+        return len(self.prelude) + (n_loops or self.config.max_loop_iters) + len(self.coda)
+
+    def backbone(self, hidden_states, position_embeddings, past_key_values=None, use_cache=False, attention_mask=None, n_loops=None):
+        """输入已完成 embedding（及多模态注入）的隐状态。
+
+        返回 (h, bridge, presents, aux)：
+            h      — Coda 之后、final norm 之前的隐状态
+            bridge — 循环块输出，作为 talker 的桥接信号
+            aux    — MoE 负载均衡损失 + ponder cost 系数
+        """
+        n_loops = n_loops or self.config.max_loop_iters
+        P = len(self.prelude)
+        if past_key_values is None:
+            past_key_values = [None] * self.num_cache_slots(n_loops)
+        presents, moe_aux = [], []
+        h = hidden_states
+        for i, layer in enumerate(self.prelude):
+            h, present = layer(h, position_embeddings, past_key_values[i], use_cache, attention_mask)
+            presents.append(present)
+            if isinstance(layer.mlp, MOEFeedForward): moe_aux.append(layer.mlp.aux_loss)
+        e = h  # 冻结注入信号
+        h, rec_presents, rec_moe, ponder = self.recurrent(
+            e, position_embeddings, past_key_values[P:P + n_loops], use_cache, attention_mask, n_loops)
+        presents += rec_presents
+        if isinstance(self.recurrent.mlp, MOEFeedForward): moe_aux.append(rec_moe)
+        bridge = h
+        for j, layer in enumerate(self.coda):
+            h, present = layer(h, position_embeddings, past_key_values[P + n_loops + j], use_cache, attention_mask)
+            presents.append(present)
+            if isinstance(layer.mlp, MOEFeedForward): moe_aux.append(layer.mlp.aux_loss)
+        aux = sum(moe_aux, h.new_zeros(())) + self.config.act_ponder_coef * ponder
+        return h, bridge, presents, aux
+
+    def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, n_loops=None, **kwargs):
         batch_size, seq_length = input_ids.shape
         if hasattr(past_key_values, 'layers'): past_key_values = None
-        past_key_values = past_key_values or [None] * len(self.layers)
-        start_pos = past_key_values[0][0].shape[1] if past_key_values[0] is not None else 0
+        start_pos = past_key_values[0][0].shape[1] if past_key_values and past_key_values[0] is not None else 0
         hidden_states = self.dropout(self.embed_tokens(input_ids))
-        # Recompute RoPE buffers lost during meta-device init (transformers>=5.x)
+        # 元设备初始化（transformers>=5.x）会丢失 RoPE 缓冲区，首次前向时重算一次
         if not self._rope_checked:
             self._rope_checked = True
             if self.freqs_cos[0, 0] == 0:
                 freqs_cos, freqs_sin = precompute_freqs_cis(dim=self.config.head_dim, end=self.config.max_position_embeddings, rope_base=self.config.rope_theta, rope_scaling=self.config.rope_scaling)
                 self.freqs_cos, self.freqs_sin = freqs_cos.to(hidden_states.device), freqs_sin.to(hidden_states.device)
         position_embeddings = (self.freqs_cos[start_pos:start_pos + seq_length], self.freqs_sin[start_pos:start_pos + seq_length])
-        presents = []
-        for layer, past_key_value in zip(self.layers, past_key_values):
-            hidden_states, present = layer(
-                hidden_states,
-                position_embeddings,
-                past_key_value=past_key_value,
-                use_cache=use_cache,
-                attention_mask=attention_mask
-            )
-            presents.append(present)
-        hidden_states = self.norm(hidden_states)
-        aux_loss = sum([l.mlp.aux_loss for l in self.layers if isinstance(l.mlp, MOEFeedForward)], hidden_states.new_zeros(1).squeeze())
-        return hidden_states, presents, aux_loss
+        h, _, presents, aux = self.backbone(hidden_states, position_embeddings, past_key_values, use_cache, attention_mask, n_loops)
+        return self.norm(h), presents, aux
+
+
+def remap_legacy_state_dict(sd, config):
+    """把旧版扁平层（model.layers.*）的主干权重映射到 RDT 结构。
+
+    旧第 0..P-1 层 → prelude；旧第 P 层 → recurrent（循环块共享的一组权重）；
+    旧最后 C 层 → coda。中间层被丢弃。新增的 LTI / LoRA / ACT / 圈数归一化参数不在旧权重中，保持随机初始化。
+    """
+    layer_ids = [int(k.split('.')[2]) for k in sd if k.startswith('model.layers.')]
+    if not layer_ids:
+        return sd
+    P, C, L = config.prelude_layers, config.coda_layers, max(layer_ids) + 1
+    out = {}
+    for k, v in sd.items():
+        if not k.startswith('model.layers.'):
+            out[k] = v
+            continue
+        parts = k.split('.')
+        i, rest = int(parts[2]), '.'.join(parts[3:])
+        if i < P:
+            out[f'model.prelude.{i}.{rest}'] = v
+        elif i == P:
+            out[f'model.recurrent.{rest}'] = v
+        elif i >= L - C:
+            out[f'model.coda.{i - (L - C)}.{rest}'] = v
+    return out
+
 
 class BaizeForCausalLM(PreTrainedModel, GenerationMixin):
     config_class = BaizeConfig
@@ -208,6 +393,9 @@ class BaizeForCausalLM(PreTrainedModel, GenerationMixin):
         self.lm_head = nn.Linear(self.config.hidden_size, self.config.vocab_size, bias=False)
         if self.config.tie_word_embeddings: self.model.embed_tokens.weight = self.lm_head.weight
         self.post_init()
+        # HF 初始化会把 Linear bias 置 0（停机概率 p≈0.5，两圈即停），改为配置的负偏置
+        with torch.no_grad():
+            self.model.recurrent.act.halt.bias.fill_(self.config.act_init_bias)
 
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, logits_to_keep=0, labels=None, **kwargs):
         hidden_states, past_key_values, aux_loss = self.model(input_ids, attention_mask, past_key_values, use_cache, **kwargs)
