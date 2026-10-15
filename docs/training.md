@@ -17,6 +17,20 @@ bash scripts/recipes/mini.sh          # 单卡 mini 数据集
 
 每个配方内的命令按顺序执行，后一条通常以前一条的 `--save_weight` 作为 `--from_weight`。
 
+## 预训练与偏好对齐
+
+在 SFT 之前可以先做纯文本续训，之后再做 DPO：
+
+```bash
+# 纯文本预训练：样本打包到 seq_len，输出 out/<save_weight>_<hidden>.pth（键名是完整模型键名的子集）
+uv run python scripts/pretrain.py --data dataset/pretrain.jsonl --save_weight pretrain --steps 1000
+
+# DPO：输入 jsonl，每行 {"messages": [...], "chosen": "...", "rejected": "..."}；参考模型为 --from_weight 的冻结副本
+uv run python scripts/dpo.py --data dataset/dpo.jsonl --from_weight pretrain --beta 0.1 --steps 500
+```
+
+`baize_v/train/pretrain.py` 与 `baize_v/train/dpo.py` 中的核心函数（`lm_loss`、`dpo_loss`、`make_pair` 等）有单元测试，见 `tests/test_pretrain_dpo.py`。这两个脚本目前是单卡实现，不支持 DDP / FSDP；DPO 的参考模型会额外占用一份显存。
+
 ## 常用参数
 
 | 参数 | 默认值 | 说明 |

@@ -45,6 +45,27 @@ uv sync --group demo
 uv run python examples/gradio_demo.py --load_from out
 ```
 
+## 批量评测：`scripts/bench.py`
+
+`scripts/bench.py` 直接读取 jsonl 数据计算指标，指标实现见 `baize_v/eval/metrics.py`，推理封装见 `baize_v/eval/runner.py`：
+
+| 任务 | 指标 | 说明 |
+| --- | --- | --- |
+| `mc` | 选择题准确率 | 按各选项的条件对数概率选择，取最大者 |
+| `vqa` | VQA 准确率（匹配标注数 / 3，封顶为 1） | 需要 `--image_dir` |
+| `asr` | WER（`--char_level 1` 时为 CER） | 对语音输入的转写结果做编辑距离 |
+
+```bash
+uv run python scripts/bench.py --task mc --data dataset/mc.jsonl --model out/baize-v
+```
+
+## 导出目录加载
+
+```python
+from baize_v.export import load_pretrained
+model = load_pretrained("out/baize-v", device="cpu")   # 不加载编码器，只恢复主干
+```
+
 ## 在代码中调用
 
 ```python

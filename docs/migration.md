@@ -38,7 +38,7 @@
 
 - 类名：`MiniMindConfig` / `MiniMindModel` / `MiniMindForCausalLM` / `MiniMindBlock` / `MiniMindOmni` 分别更名为 `BaizeConfig` / `BaizeModel` / `BaizeForCausalLM` / `BaizeBlock` / `BaizeOmni`。旧名称均保留别名，旧代码无需立即修改。
 - 基座模块文件：`baize_v/models/minimind.py` 更名为 `baize_v/models/llm.py`。
-- `model_type`：`minimind` → `baize`，`minimind-o` → `baize_v`。**已导出的 transformers 模型**的 `config.json` 仍写着旧值；加载时请依赖其自带的 `auto_map` 与 `trust_remote_code=True`。若出现无法识别的情况，手动把 `config.json` 中的 `model_type` 改为新值即可，权重无需转换。
+- `model_type`：`minimind` → `baize`，`minimind-o` → `baize_v`。导出格式已改为不依赖 transformers 远程代码：`config.json` + `pytorch_model.bin`（fp16，不含编码器）+ tokenizer，由 `baize_v.export.load_pretrained` 加载。旧版导出目录带有 `auto_map` 与远程代码，请用 `scripts/convert.py --torch <权重.pth> --out <新目录>` 重新导出。
 - 训练数据的系统提示词由 “你是minimind” 改为 “你是Baize”。这会改变基于该提示词的训练分布，若要复现旧模型请保留旧提示词。
 - 本地导出目录：`out/minimind-3o` 改为 `out/baize-v`。Hugging Face 上的仓库名 `jingyaogong/minimind-3o` 不变。
 

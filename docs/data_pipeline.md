@@ -114,6 +114,19 @@ uv run python scripts/prepare_data.py --config configs/data_mix.json
 uv run python scripts/prepare_data.py --config configs/data_mix.json --only_mix   # 复用已构建的分源文件
 ```
 
+## 语音输出监督：`scripts/synth_speech.py`
+
+Mimi 目标需要真实的语音作为回答。`scripts/synth_speech.py` 读取已转换的文本 SFT parquet，用你自己提供的 TTS 合成回答语音，再经 Mimi 编码为 8 层码本，按帧交织写入 `answer_audios`：
+
+```bash
+uv run python scripts/synth_speech.py --in dataset/prepared/sft_text.parquet --out dataset/speech_out.parquet \
+    --tts mypkg.tts:synthesize --limit 1000
+```
+
+- `--tts` 的签名为 `synthesize(text) -> (waveform, sample_rate)`，本项目不附带 TTS 模型，也不自动下载。
+- 默认 Mimi 编码器从 `pretrained/mimi` 加载，可用 `--mimi_encode module:function` 替换。
+- 交织逻辑见 `baize_v/data/prep/speech_targets.py`，格式与 `OmniDataset` 的 `answer_audios` 一致。
+
 ## 许可证与合规
 
 - 不同数据集的许可证差异很大。LAION、网络抓取数据、由商用模型生成的指令数据都有使用限制，商用前必须逐一确认。
