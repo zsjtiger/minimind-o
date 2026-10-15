@@ -116,7 +116,7 @@ class BaizeOmni(BaizeForCausalLM):
         if not self._rope_checked:
             self._rope_checked = True
             if self.thinker.freqs_cos[0, 0] == 0:
-                freqs_cos, freqs_sin = precompute_freqs_cis(dim=self.config.head_dim, end=self.config.max_position_embeddings, rope_base=self.config.rope_theta, rope_scaling=self.config.rope_scaling)
+                freqs_cos, freqs_sin = precompute_freqs_cis(dim=self.thinker.rope_dim, end=self.config.max_position_embeddings, rope_base=self.config.rope_theta, rope_scaling=self.config.rope_scaling)
                 self.thinker.freqs_cos, self.thinker.freqs_sin = freqs_cos.to(input_ids.device), freqs_sin.to(input_ids.device)
             if self.talker.freqs_cos[0, 0] == 0:
                 freqs_cos, freqs_sin = precompute_freqs_cis(dim=self.talker.talker_config.head_dim, end=self.config.max_position_embeddings, rope_base=self.config.rope_theta, rope_scaling=self.config.rope_scaling)

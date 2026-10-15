@@ -1,11 +1,10 @@
-import os
 from contextlib import nullcontext
 
 import torch
 from torch import optim
 
 from baize_v.models.omni import BaizeOmni
-from baize_v.train.checkpoint import omni_checkpoint
+from baize_v.train.checkpoint import save_checkpoint, load_checkpoint
 from baize_v.train.init import init_omni_model
 from baize_v.train.losses import compute_losses
 from baize_v.train.schedule import get_lr, SkipBatchSampler
@@ -42,14 +41,19 @@ def test_checkpoint_roundtrip(tmp_path):
     torch.manual_seed(0)
     model = BaizeOmni(cfg, audio_encoder_path=MISSING, vision_model_path=MISSING)
     opt = optim.AdamW(model.parameters(), lr=1e-4)
-    omni_checkpoint(cfg, weight="t", model=model, optimizer=opt, epoch=1, step=5, save_dir=str(tmp_path))
-    # 续训文件已包含完整模型权重，不再额外写一份纯权重副本
-    assert os.path.exists(tmp_path / "t_64_resume.pth") and not os.path.exists(tmp_path / "t_64.pth")
+    save_checkpoint(cfg, "t", weights_dir=str(tmp_path / "out"), resume_dir=str(tmp_path / "ckpt"),
+                    model_sd=model.state_dict(), optim_sd=opt.state_dict(), scaler_sd={},
+                    epoch=1, step=5, run_id="abc", mode="standard")
+    # 推理权重在 weights_dir，续训文件在 resume_dir；续训文件不再额外写纯权重副本
+    assert (tmp_path / "out" / "t_64.pth").exists()
+    assert (tmp_path / "ckpt" / "t_64_resume.pth").exists()
+    assert not (tmp_path / "ckpt" / "t_64.pth").exists()
 
-    data = omni_checkpoint(cfg, weight="t", save_dir=str(tmp_path))
-    assert data["epoch"] == 1 and data["step"] == 5
-    assert set(data["model"]) == set(model.state_dict())
+    data = load_checkpoint(cfg, "t", resume_dir=str(tmp_path / "ckpt"))
+    assert data["epoch"] == 1 and data["step"] == 5 and data["run_id"] == "abc" and data["mode"] == "standard"
+    assert set(data["model"]) == {k for k in model.state_dict() if not k.startswith(("audio_encoder.", "vision_encoder."))}
     assert all(v.dtype == torch.float16 for v in data["model"].values())
+    assert load_checkpoint(cfg, "missing", resume_dir=str(tmp_path / "ckpt")) is None
 
 
 def test_init_omni_model_without_weights(tmp_path):

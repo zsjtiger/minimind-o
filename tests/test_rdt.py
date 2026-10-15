@@ -102,3 +102,42 @@ def test_omni_generate_runs_with_recurrent_thinker():
     chunks = [c for c, _ in model.stream_generate(torch.tensor([[1, 2, 3, 4]]), eos_token_id=2, max_new_tokens=4, temperature=0.8,
                                                   top_p=0.9, rp=1.0, use_cache=True) if c is not None]
     assert chunks
+
+
+@pytest.mark.parametrize("use_act", [False, True])
+def test_mla_incremental_decoding_matches_full_forward(use_act):
+    """MLA 压缩缓存下，增量解码与整段前向的最后一个位置一致。"""
+    model = _text_model(attn_type="mla", use_act=use_act)
+    ids = torch.randint(0, 6000, (1, 10))
+    with torch.no_grad():
+        full = model(ids).logits[:, -1]
+        prefill = model(ids[:, :-1], use_cache=True)
+        step = model(ids[:, -1:], past_key_values=prefill.past_key_values, use_cache=True)
+    assert torch.allclose(full, step.logits[:, -1], atol=1e-4)
+
+
+def test_mla_cache_is_compressed():
+    """MLA 每层缓存 kv_lora_rank + rope 维，显著小于 GQA 的 K/V 缓存。"""
+    cfg = make_tiny_config(attn_type="mla", kv_lora_rank=8, qk_rope_head_dim=4)
+    model = BaizeForCausalLM(cfg).eval()
+    out = model(torch.randint(0, 6000, (1, 5)), use_cache=True)
+    c_kv, k_rope = out.past_key_values[0]
+    assert c_kv.shape[-1] == 8 and k_rope.shape[-1] == 4 and k_rope.shape[2] == 1
+
+
+def test_grad_checkpointing_matches_plain_training():
+    """激活重计算不改变前向输出与梯度（同一随机种子）。"""
+    torch.manual_seed(0)
+    ref = BaizeForCausalLM(make_tiny_config()).train()
+    ckpt = BaizeForCausalLM(make_tiny_config()).train()
+    ckpt.load_state_dict(ref.state_dict())
+    ckpt.model.enable_grad_checkpointing(True)
+    ids = torch.randint(0, 6000, (2, 8))
+    la = ref(ids, labels=ids).loss
+    lb = ckpt(ids, labels=ids).loss
+    la.backward()
+    lb.backward()
+    assert torch.allclose(la, lb, atol=1e-5)
+    g1 = ref.model.recurrent.self_attn.q_proj.weight.grad
+    g2 = ckpt.model.recurrent.self_attn.q_proj.weight.grad
+    assert torch.allclose(g1, g2, atol=1e-5)

@@ -24,6 +24,12 @@ class BaizeConfig(PretrainedConfig):
         act_init_bias=-3.0,          # 停机预测器偏置：初始 p≈0.05，训练初期跑满所有圈
         act_ponder_coef=1e-3,        # ponder cost 系数（鼓励简单 token 早停）
         loop_emb_frac=0.125,         # 圈数正弦嵌入占用的通道比例（D/8）
+        attn_type="gqa",             # "gqa" | "mla"（DeepSeek-V2 风格的压缩 KV 缓存）
+        kv_lora_rank=128,            # MLA：压缩 KV 隐变量维度（缓存的主体）
+        q_lora_rank=256,             # MLA：Q 的低秩维度
+        qk_rope_head_dim=32,         # MLA：携带 RoPE 的 q/k 维度
+        qk_nope_head_dim=32,         # MLA：不带位置的 q/k 维度
+        v_head_dim=32,               # MLA：value 维度
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -38,6 +44,12 @@ class BaizeConfig(PretrainedConfig):
         self.act_init_bias = act_init_bias
         self.act_ponder_coef = act_ponder_coef
         self.loop_emb_frac = loop_emb_frac
+        self.attn_type = attn_type
+        self.kv_lora_rank = kv_lora_rank
+        self.q_lora_rank = q_lora_rank
+        self.qk_rope_head_dim = qk_rope_head_dim
+        self.qk_nope_head_dim = qk_nope_head_dim
+        self.v_head_dim = v_head_dim
         self.dropout = kwargs.get("dropout", 0.0)
         self.vocab_size = kwargs.get("vocab_size", 6400)
         self.bos_token_id = kwargs.get("bos_token_id", 1)

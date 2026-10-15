@@ -1,4 +1,5 @@
 import math, torch, torch.nn.functional as F
+import torch.utils.checkpoint
 from torch import nn
 from transformers.activations import ACT2FN
 from transformers import PreTrainedModel, GenerationMixin
@@ -139,10 +140,82 @@ class MOEFeedForward(nn.Module):
             self.aux_loss = scores.new_zeros(1).squeeze()
         return y.view(batch_size, seq_len, hidden_dim)
 
+class MLAttention(nn.Module):
+    """多头潜变量注意力（MLA，DeepSeek-V2 风格）。
+
+    缓存的是压缩隐变量 c_kv（kv_lora_rank 维）与共享的 RoPE key，每步用 kv_up 重建 K/V，
+    缓存量为 kv_lora_rank + qk_rope_head_dim，远小于 GQA 的 2·Hk·d。
+    接口与 Attention 一致：forward(x, position_embeddings, past_key_value, use_cache, attention_mask) → (out, present)。
+    """
+
+    def __init__(self, config: BaizeConfig):
+        super().__init__()
+        self.n_heads = config.num_attention_heads
+        self.kv_lora_rank = config.kv_lora_rank
+        self.rope_dim = config.qk_rope_head_dim
+        self.nope_dim = config.qk_nope_head_dim
+        self.v_dim = config.v_head_dim
+        hidden = config.hidden_size
+        self.q_down = nn.Linear(hidden, config.q_lora_rank, bias=False)
+        self.q_norm = RMSNorm(config.q_lora_rank, eps=config.rms_norm_eps)
+        self.q_up_nope = nn.Linear(config.q_lora_rank, self.n_heads * self.nope_dim, bias=False)
+        self.q_up_rope = nn.Linear(config.q_lora_rank, self.n_heads * self.rope_dim, bias=False)
+        self.kv_down = nn.Linear(hidden, self.kv_lora_rank + self.rope_dim, bias=False)
+        self.kv_norm = RMSNorm(self.kv_lora_rank, eps=config.rms_norm_eps)
+        self.kv_up = nn.Linear(self.kv_lora_rank, self.n_heads * (self.nope_dim + self.v_dim), bias=False)
+        self.o_proj = nn.Linear(self.n_heads * self.v_dim, hidden, bias=False)
+        self.dropout = config.dropout
+
+    def forward(self, x, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None):
+        bsz, seq_len, _ = x.shape
+        cos, sin = position_embeddings  # [T, rope_dim]
+        c_q = self.q_norm(self.q_down(x))
+        q_nope = self.q_up_nope(c_q).view(bsz, seq_len, self.n_heads, self.nope_dim)
+        q_rope = self.q_up_rope(c_q).view(bsz, seq_len, self.n_heads, self.rope_dim)
+        q_rope, _ = apply_rotary_pos_emb(q_rope, q_rope, cos, sin)
+        kv_raw = self.kv_down(x)
+        c_kv = kv_raw[..., : self.kv_lora_rank]
+        k_rope = kv_raw[..., self.kv_lora_rank:].unsqueeze(2)  # [B, T, 1, rope]，所有头共享
+        _, k_rope = apply_rotary_pos_emb(k_rope, k_rope, cos, sin)
+        if past_key_value is not None:
+            c_kv = torch.cat([past_key_value[0], c_kv], dim=1)
+            k_rope = torch.cat([past_key_value[1], k_rope], dim=1)
+        present = (c_kv, k_rope) if use_cache else None
+        S = c_kv.shape[1]
+        kv = self.kv_up(self.kv_norm(c_kv)).view(bsz, S, self.n_heads, self.nope_dim + self.v_dim)
+        k_nope, v = kv[..., : self.nope_dim], kv[..., self.nope_dim:]
+        k = torch.cat([k_nope, k_rope.expand(bsz, S, self.n_heads, self.rope_dim)], dim=-1)
+        q = torch.cat([q_nope, q_rope], dim=-1)
+        q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+        out = causal_sdpa(q, k, v, dropout_p=self.dropout if self.training else 0.0)
+        out = out.transpose(1, 2).reshape(bsz, seq_len, -1)
+        return self.o_proj(out), present
+
+
+def causal_sdpa(q, k, v, dropout_p=0.0):
+    """带因果 mask 的 SDPA，兼容 KV cache：q 为序列末尾 T 个位置，k/v 长度为 S。"""
+    T, S = q.shape[-2], k.shape[-2]
+    if T == 1:
+        return F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
+    if T == S:
+        return F.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=dropout_p)
+    mask = torch.ones(T, S, dtype=torch.bool, device=q.device).tril(diagonal=S - T)
+    return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=dropout_p)
+
+
+def build_attention(config: BaizeConfig):
+    return MLAttention(config) if config.attn_type == "mla" else Attention(config)
+
+
+def rope_dim_of(config: BaizeConfig) -> int:
+    """RoPE 作用的维度：MLA 只对 qk_rope_head_dim 部分施加位置编码。"""
+    return config.qk_rope_head_dim if config.attn_type == "mla" else config.head_dim
+
+
 class BaizeBlock(nn.Module):
     def __init__(self, layer_id: int, config: BaizeConfig):
         super().__init__()
-        self.self_attn = Attention(config)
+        self.self_attn = build_attention(config)
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.mlp = FeedForward(config) if not config.use_moe else MOEFeedForward(config)
@@ -228,12 +301,13 @@ class RecurrentBlock(nn.Module):
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.self_attn = Attention(config)
+        self.self_attn = build_attention(config)
         self.mlp = FeedForward(config) if not config.use_moe else MOEFeedForward(config)
         self.injection = LTIInjection(config.hidden_size)
         self.act = ACTHalting(config.hidden_size)
         self.lora = LoRAAdapter(config.hidden_size, config.lora_rank, config.max_loop_iters)
         self.loop_dim = max(2, int(config.hidden_size * config.loop_emb_frac))
+        self.grad_checkpointing = False  # 训练时按圈做激活重计算
 
     def _loop_step(self, h, e, position_embeddings, t, past_kv, use_cache, attention_mask):
         h_loop = loop_index_embedding(h, t, self.loop_dim)
@@ -257,7 +331,11 @@ class RecurrentBlock(nn.Module):
 
         for t in range(n_loops):
             past_kv = past_key_values[t] if past_key_values is not None else None
-            h, present = self._loop_step(h, e, position_embeddings, t, past_kv, use_cache, attention_mask)
+            if self.grad_checkpointing and self.training and not use_cache:
+                h, present = torch.utils.checkpoint.checkpoint(
+                    self._loop_step, h, e, position_embeddings, t, None, False, attention_mask, use_reentrant=False)
+            else:
+                h, present = self._loop_step(h, e, position_embeddings, t, past_kv, use_cache, attention_mask)
             presents.append(present)
             if isinstance(self.mlp, MOEFeedForward):
                 moe_aux.append(self.mlp.aux_loss)
@@ -302,10 +380,17 @@ class BaizeModel(nn.Module):
         self.recurrent = RecurrentBlock(config)
         self.coda = nn.ModuleList([BaizeBlock(i, config) for i in range(config.coda_layers)])
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        freqs_cos, freqs_sin = precompute_freqs_cis(dim=config.head_dim, end=config.max_position_embeddings, rope_base=config.rope_theta, rope_scaling=config.rope_scaling)
+        self.rope_dim = rope_dim_of(config)
+        freqs_cos, freqs_sin = precompute_freqs_cis(dim=self.rope_dim, end=config.max_position_embeddings, rope_base=config.rope_theta, rope_scaling=config.rope_scaling)
         self.register_buffer("freqs_cos", freqs_cos, persistent=False)
         self.register_buffer("freqs_sin", freqs_sin, persistent=False)
         self._rope_checked = False
+        self.grad_checkpointing = False
+
+    def enable_grad_checkpointing(self, enabled=True):
+        """激活重计算：训练且不使用 KV cache 时，逐层 / 逐圈丢弃中间激活，反向时重算。"""
+        self.grad_checkpointing = enabled
+        self.recurrent.grad_checkpointing = enabled
 
     def num_cache_slots(self, n_loops=None):
         return len(self.prelude) + (n_loops or self.config.max_loop_iters) + len(self.coda)
@@ -324,8 +409,12 @@ class BaizeModel(nn.Module):
             past_key_values = [None] * self.num_cache_slots(n_loops)
         presents, moe_aux = [], []
         h = hidden_states
+        ckpt = self.grad_checkpointing and self.training and not use_cache
         for i, layer in enumerate(self.prelude):
-            h, present = layer(h, position_embeddings, past_key_values[i], use_cache, attention_mask)
+            if ckpt:
+                h, present = torch.utils.checkpoint.checkpoint(layer, h, position_embeddings, None, False, attention_mask, use_reentrant=False)
+            else:
+                h, present = layer(h, position_embeddings, past_key_values[i], use_cache, attention_mask)
             presents.append(present)
             if isinstance(layer.mlp, MOEFeedForward): moe_aux.append(layer.mlp.aux_loss)
         e = h  # 冻结注入信号
@@ -335,7 +424,10 @@ class BaizeModel(nn.Module):
         if isinstance(self.recurrent.mlp, MOEFeedForward): moe_aux.append(rec_moe)
         bridge = h
         for j, layer in enumerate(self.coda):
-            h, present = layer(h, position_embeddings, past_key_values[P + n_loops + j], use_cache, attention_mask)
+            if ckpt:
+                h, present = torch.utils.checkpoint.checkpoint(layer, h, position_embeddings, None, False, attention_mask, use_reentrant=False)
+            else:
+                h, present = layer(h, position_embeddings, past_key_values[P + n_loops + j], use_cache, attention_mask)
             presents.append(present)
             if isinstance(layer.mlp, MOEFeedForward): moe_aux.append(layer.mlp.aux_loss)
         aux = sum(moe_aux, h.new_zeros(())) + self.config.act_ponder_coef * ponder
@@ -350,7 +442,7 @@ class BaizeModel(nn.Module):
         if not self._rope_checked:
             self._rope_checked = True
             if self.freqs_cos[0, 0] == 0:
-                freqs_cos, freqs_sin = precompute_freqs_cis(dim=self.config.head_dim, end=self.config.max_position_embeddings, rope_base=self.config.rope_theta, rope_scaling=self.config.rope_scaling)
+                freqs_cos, freqs_sin = precompute_freqs_cis(dim=self.rope_dim, end=self.config.max_position_embeddings, rope_base=self.config.rope_theta, rope_scaling=self.config.rope_scaling)
                 self.freqs_cos, self.freqs_sin = freqs_cos.to(hidden_states.device), freqs_sin.to(hidden_states.device)
         position_embeddings = (self.freqs_cos[start_pos:start_pos + seq_length], self.freqs_sin[start_pos:start_pos + seq_length])
         h, _, presents, aux = self.backbone(hidden_states, position_embeddings, past_key_values, use_cache, attention_mask, n_loops)
@@ -363,6 +455,8 @@ def remap_legacy_state_dict(sd, config):
     旧第 0..P-1 层 → prelude；旧第 P 层 → recurrent（循环块共享的一组权重）；
     旧最后 C 层 → coda。中间层被丢弃。新增的 LTI / LoRA / ACT / 圈数归一化参数不在旧权重中，保持随机初始化。
     """
+    # 标量缩放参数改为 (1,) 形状（FSDP2 不支持标量参数）
+    sd = {k: (v.reshape(1) if v.dim() == 0 and k.endswith(('text_scale', 'audio_scale')) else v) for k, v in sd.items()}
     layer_ids = [int(k.split('.')[2]) for k in sd if k.startswith('model.layers.')]
     if not layer_ids:
         return sd

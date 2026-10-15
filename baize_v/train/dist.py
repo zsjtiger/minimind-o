@@ -16,12 +16,14 @@ def Logger(content):
 
 
 def init_distributed_mode():
+    """torchrun 启动时初始化进程组：有 GPU 用 NCCL，否则用 gloo（便于 CPU 调试）。"""
     if int(os.environ.get("RANK", -1)) == -1:
-        return 0  # 非DDP模式
-    
-    dist.init_process_group(backend="nccl")
+        return 0  # 非分布式模式
+    backend = "nccl" if torch.cuda.is_available() else "gloo"
+    dist.init_process_group(backend=backend)
     local_rank = int(os.environ["LOCAL_RANK"])
-    torch.cuda.set_device(local_rank)
+    if backend == "nccl":
+        torch.cuda.set_device(local_rank)
     return local_rank
 
 

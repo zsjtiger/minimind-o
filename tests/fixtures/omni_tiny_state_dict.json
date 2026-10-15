@@ -181,7 +181,9 @@
 32,
 64
 ],
-"talker.audio_scale": [],
+"talker.audio_scale": [
+1
+],
 "talker.codec_proj.0.bias": [
 64
 ],
@@ -399,7 +401,9 @@
 64,
 192
 ],
-"talker.text_scale": [],
+"talker.text_scale": [
+1
+],
 "vision_proj.mlp.0.bias": [
 768
 ],

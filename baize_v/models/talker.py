@@ -37,7 +37,8 @@ class TalkerModule(nn.Module):
         self.embed_tokens = TalkerEmbedding(config.audio_vocab_size, config.talker_hidden_size)
         self.codec_proj = nn.Sequential(nn.Linear(config.talker_hidden_size, config.talker_hidden_size), nn.GELU(), nn.Linear(config.talker_hidden_size, config.talker_hidden_size), RMSNorm(config.talker_hidden_size, eps=config.rms_norm_eps))
         self.embed_proj = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size), nn.GELU(), nn.Linear(config.hidden_size, config.talker_hidden_size), RMSNorm(config.talker_hidden_size, eps=config.rms_norm_eps))
-        self.text_scale, self.audio_scale = nn.Parameter(torch.tensor(3.0)), nn.Parameter(torch.tensor(1.0))
+        # 形状 (1,) 而非标量：FSDP2 不支持标量参数
+        self.text_scale, self.audio_scale = nn.Parameter(torch.full((1,), 3.0)), nn.Parameter(torch.ones(1))
         self.spk_proj = nn.Linear(config.spk_emb_size, config.talker_hidden_size, bias=False)
         freqs_cos, freqs_sin = precompute_freqs_cis(dim=self.talker_config.head_dim, end=config.max_position_embeddings, rope_base=config.rope_theta, rope_scaling=config.rope_scaling)
         self.register_buffer("freqs_cos", freqs_cos, persistent=False)

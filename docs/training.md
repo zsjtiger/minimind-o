@@ -53,3 +53,29 @@ bash scripts/recipes/mini.sh          # 单卡 mini 数据集
 - 训练中 SenseVoice、SigLIP2、Mimi 始终冻结，只从 `pretrained/` 加载。
 - 损失 = 文本交叉熵 + 8 层音频交叉熵的平均 + MoE 辅助损失。音频损失对 stop token 加权 10 倍（见 `baize_v/train/losses.py`）。
 - 训练 checkpoint 为 fp16 权重；续训时额外保存优化器状态。
+
+## 并行与显存
+
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `--attn_type` | `gqa` | `gqa` 或 `mla`（潜变量注意力，KV cache 更小） |
+| `--grad_checkpoint` | `0` | `1` 开启激活重计算，省显存、略增计算 |
+| `--fsdp` | `0` | `1` 且用 `torchrun` 多进程启动时，使用 FSDP2 分片；不能与 `--dtype float16` 或 `--use_compile` 同用 |
+
+多卡示例：
+
+```bash
+uv run torchrun --nproc_per_node 4 scripts/train_sft.py --fsdp 1 --grad_checkpoint 1 --attn_type mla --data_path dataset/sft_a2a_mini.parquet
+```
+
+FSDP 的续训文件保存的是完整（未分片）的模型与优化器状态，可以在相同的 FSDP 模式下恢复优化器状态。若断点与当前模式（DDP / FSDP）不同，只恢复模型权重与步数，优化器重新开始，启动时会打印警告。
+
+## 冒烟测试
+
+无需 GPU 和训练数据即可验证训练链路（单进程、DDP、FSDP2、续训，以及 DDP 与 FSDP 的权重一致性）：
+
+```bash
+bash scripts/smoke_train.sh
+```
+
+脚本使用 CPU 与极小模型，通过 gloo 后端启动 2 个进程。

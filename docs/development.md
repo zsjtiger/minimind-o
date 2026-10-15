@@ -91,3 +91,8 @@ uv run ruff check baize_v tests scripts
 - **Parquet 整表读入内存**：改为按需读取需要按 row group 解码。训练是随机采样，row group 缓存命中率低，每个样本都可能重新解码整个 row group，训练速度会明显下降。目前保留整表加载，每个进程一份内存。如果数据集超过内存，建议先用更小的 row group 切分数据，再评估按需读取的方案。
 - **`OmniConfig` 拆分**：配置字段会写入已导出的 `config.json`，拆分会影响旧模型加载，需要单独设计迁移方案。
 - **Gradio 示例的全局变量与长函数**：它只是示例入口，优先级低，暂未拆分。
+
+## 冒烟测试
+
+- `bash scripts/smoke_train.sh`：训练链路端到端，包括 DDP / FSDP2 的权重一致性检查。
+- `uv run pytest`：单元与结构测试。

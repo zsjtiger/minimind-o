@@ -107,9 +107,10 @@ tokens → embed → [Prelude × P] → e ──┐
 
 与 LLMBaize 的差异：
 
-- 注意力与 FFN 沿用本项目的 `Attention` / `FeedForward` / `MOEFeedForward`，只复用 RDT 的循环与注入机制，没有引入 MLA 与 FSDP。
-- 循环块的 FFN 与 Prelude/Coda 一致（由 `use_moe` 决定），没有强制使用 MoE。
-- 没有梯度检查点（`grad_checkpointing`）。
+- 注意力：`attn_type="gqa"`（默认，分组查询注意力）或 `attn_type="mla"`（多头潜变量注意力，参考 LLMBaize 的 MLAttention）。MLA 只缓存压缩隐变量 `c_kv` 与共享的 RoPE key，缓存量为 `kv_lora_rank + qk_rope_head_dim`，接口与 GQA 一致，因此循环块与 KV cache 的逻辑不变。
+- FFN：稠密 SwiGLU，或 MoE（由 `use_moe` 决定，循环块与 Prelude/Coda 一致）。
+- 激活重计算：`--grad_checkpoint 1`，训练时按层、按圈重算中间激活。
+- 分布式：DDP，或 `--fsdp 1` 使用 FSDP2 逐块分片参数、梯度与优化器状态（需 `torchrun` 启动，`--dtype` 不能用 float16）。
 
 talker 的桥接信号由“中间层输出”改为“循环块输出”，talker 本身仍是标准的堆叠层。
 
