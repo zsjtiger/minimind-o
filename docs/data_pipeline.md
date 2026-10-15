@@ -2,6 +2,17 @@
 
 本文说明训练数据的来源、混合配比与统一的预处理流程。代码位于 `baize_v/data/prep/`，配置在 `configs/data_mix.json`，入口是 `scripts/prepare_data.py`。
 
+## 快速跑通（合成数据）
+
+用合成数据验证整条流水线（不代表真实数据的内容）：
+
+```bash
+uv run python scripts/make_demo_raw.py                                    # 生成 dataset/demo_raw/
+uv run python scripts/prepare_data.py --config configs/data_mix_demo.json # 构建并混合，输出 dataset/demo/mix.parquet
+```
+
+`--only_mix` 可跳过构建、复用 `dataset/demo/prepared/` 下已有的分源文件。端到端测试见 `tests/test_prepare_pipeline.py`。
+
 ## 当前状态（重要）
 
 - 本环境无法访问 Hugging Face，**没有下载任何数据集，也没有核对过各数据集的字段名**。转换器的列名都以参数形式暴露，首次使用前请用样本核对。

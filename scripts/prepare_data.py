@@ -17,6 +17,10 @@ from baize_v.data.prep.mix import mix_sources
 from baize_v.paths import ROOT_DIR
 
 
+# 转换器参数中表示文件或目录路径的键（其余字符串参数如列名不是路径）
+PATH_KEYS = {'annotations', 'image_dir', 'jsonl', 'frames_root', 'parquet'}
+
+
 def _abs(path):
     return path if os.path.isabs(path) else os.path.join(ROOT_DIR, path)
 
@@ -53,7 +57,7 @@ def main():
                 continue
             stats = {'reused': True}
         else:
-            inputs = [src.get('passthrough')] + [v for v in src.get('build', {}).get('args', {}).values() if isinstance(v, str)]
+            inputs = [src.get('passthrough')] + [v for k, v in src.get('build', {}).get('args', {}).items() if k in PATH_KEYS]
             missing = [p for p in inputs if p and not os.path.exists(_abs(p))]
             if missing:
                 print(f"[skip] {src['name']}: 原始数据不存在 {missing}")

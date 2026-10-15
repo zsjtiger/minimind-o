@@ -1,0 +1,98 @@
+{
+  "_说明": "演示配置：指向 scripts/make_demo_raw.py 生成的合成数据，用于验证流水线能跑通。",
+  "total": 200,
+  "seed": 42,
+  "prepared_dir": "dataset/demo/prepared",
+  "output": "dataset/demo/mix.parquet",
+  "sources": [
+    {
+      "name": "sft_text",
+      "modality": "text",
+      "weight": 0.35,
+      "enabled": true,
+      "passthrough": "dataset/demo_raw/text/sft.parquet"
+    },
+    {
+      "name": "coco_captions",
+      "modality": "image_text",
+      "weight": 0.15,
+      "enabled": true,
+      "build": {
+        "type": "coco_caption",
+        "args": {
+          "annotations": "dataset/demo_raw/coco/captions.json",
+          "image_dir": "dataset/demo_raw/coco/images",
+          "captions_per_image": 1
+        }
+      }
+    },
+    {
+      "name": "vqa",
+      "modality": "image_text",
+      "weight": 0.12,
+      "enabled": true,
+      "build": {
+        "type": "vqa_jsonl",
+        "args": {
+          "jsonl": "dataset/demo_raw/vqa/train.jsonl",
+          "image_dir": "dataset/demo_raw/vqa/images"
+        }
+      }
+    },
+    {
+      "name": "doc_chart_vqa",
+      "modality": "image_text",
+      "weight": 0.08,
+      "enabled": false,
+      "build": {
+        "type": "vqa_jsonl",
+        "args": {
+          "jsonl": "dataset/demo_raw/vqa/train.jsonl",
+          "image_dir": "dataset/demo_raw/vqa/images"
+        }
+      }
+    },
+    {
+      "name": "msrvtt",
+      "modality": "video_text",
+      "weight": 0.1,
+      "enabled": true,
+      "build": {
+        "type": "video_caption_frames",
+        "args": {
+          "jsonl": "dataset/demo_raw/msrvtt/train.jsonl",
+          "frames_root": "dataset/demo_raw/msrvtt/frames"
+        }
+      }
+    },
+    {
+      "name": "voice_assistant",
+      "modality": "speech_text",
+      "weight": 0.08,
+      "enabled": true,
+      "build": {
+        "type": "speech_dialog_parquet",
+        "args": {
+          "parquet": "dataset/demo_raw/voice/train.parquet",
+          "question_col": "question_audio",
+          "answer_col": "answer"
+        }
+      }
+    },
+    {
+      "name": "ultrachat_slam",
+      "modality": "speech_text",
+      "weight": 0.12,
+      "enabled": true,
+      "build": {
+        "type": "speech_dialog_parquet",
+        "args": {
+          "parquet": "dataset/demo_raw/voice/train.parquet",
+          "question_col": "question_audio",
+          "answer_col": "answer",
+          "round_col": "round"
+        }
+      }
+    }
+  ]
+}

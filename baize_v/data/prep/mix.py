@@ -9,16 +9,26 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 
+def _largest_remainder(raw, total):
+    """把浮点目标数取整，并保证总和恰好等于 total（最大余数法）。"""
+    floors = [int(x) for x in raw]
+    short = total - sum(floors)
+    order = sorted(range(len(raw)), key=lambda i: raw[i] - floors[i], reverse=True)
+    for i in order[:short]:
+        floors[i] += 1
+    return floors
+
+
 def mix_sources(sources, total, out_path, seed=0, report_path=None):
     """sources: [{"name", "path", "weight"}]。返回每个数据源的统计报告。"""
     wsum = sum(s['weight'] for s in sources)
     if wsum <= 0:
         raise ValueError('权重之和必须大于 0')
     rng = np.random.default_rng(seed)
+    targets = _largest_remainder([total * s['weight'] / wsum for s in sources], total)
     tables, report = [], {}
-    for s in sources:
+    for s, target in zip(sources, targets):
         n_avail = pq.ParquetFile(s['path']).metadata.num_rows
-        target = int(round(total * s['weight'] / wsum))
         entry = {'weight': s['weight'], 'available': n_avail, 'target': target, 'upsampled': False}
         report[s['name']] = entry
         if n_avail == 0 or target == 0:
