@@ -17,7 +17,7 @@ class BaizeConfig(PretrainedConfig):
         use_moe=False,
         prelude_layers=2,            # P：循环前的一次性层
         coda_layers=2,               # C：循环后的一次性层
-        max_loop_iters=8,            # T：循环圈数（推理时可按需覆盖）
+        max_loop_iters=4,            # T：循环圈数（推理时可按需覆盖）
         lora_rank=8,                 # 深度 LoRA 秩
         use_act=True,                # ACT 早停；False 时跑满 T 圈
         act_threshold=0.99,          # ACT 累积停机概率阈值

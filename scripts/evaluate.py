@@ -240,7 +240,7 @@ def parse_args():
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
     parser.add_argument('--prelude_layers', default=2, type=int, help="循环前的 Prelude 层数 P")
     parser.add_argument('--coda_layers', default=2, type=int, help="循环后的 Coda 层数 C")
-    parser.add_argument('--max_loop_iters', default=8, type=int, help="循环圈数 T")
+    parser.add_argument('--max_loop_iters', default=4, type=int, help="循环圈数 T")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构")
     parser.add_argument('--max_new_tokens', default=512, type=int, help="最大生成长度")
     parser.add_argument('--temperature', default=0.7, type=float, help="Thinker生成温度")

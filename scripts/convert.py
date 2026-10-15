@@ -46,7 +46,7 @@ def convert_transformers2torch(transformers_path, torch_path):
 
 
 if __name__ == '__main__':
-    lm_config = OmniConfig(hidden_size=768, use_moe=False, prelude_layers=2, coda_layers=2, max_loop_iters=8)
+    lm_config = OmniConfig(hidden_size=768, use_moe=False, prelude_layers=2, coda_layers=2, max_loop_iters=4)
     torch_path = os.path.join(OUT_DIR, f"sft_omni_{lm_config.hidden_size}{'_moe' if lm_config.use_moe else ''}.pth")
     transformers_path = os.path.join(OUT_DIR, 'baize-v')
     convert_torch2transformers(torch_path, transformers_path, lm_config)
