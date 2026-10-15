@@ -1,0 +1,98 @@
+{
+  "_说明": "初始配比草案，按样本数计。source 为 build 时由转换器生成，为 passthrough 时直接使用已有 parquet。enabled=false 的源在原始数据不存在时自动跳过。 语音输入数据（speech_text）只提供\"语音→文本\"的监督，占比控制在 20%；语音输出仍依赖已有的 Mimi 码本数据。",
+  "total": 100000,
+  "seed": 42,
+  "prepared_dir": "dataset/prepared",
+  "output": "dataset/mix_v1.parquet",
+  "sources": [
+    {
+      "name": "sft_text",
+      "modality": "text",
+      "weight": 0.35,
+      "enabled": true,
+      "passthrough": "dataset/sft_t2t.parquet"
+    },
+    {
+      "name": "coco_captions",
+      "modality": "image_text",
+      "weight": 0.15,
+      "enabled": false,
+      "build": {
+        "type": "coco_caption",
+        "args": {
+          "annotations": "dataset/raw/coco/annotations/captions_train2017.json",
+          "image_dir": "dataset/raw/coco/train2017",
+          "captions_per_image": 1
+        }
+      }
+    },
+    {
+      "name": "vqa",
+      "modality": "image_text",
+      "weight": 0.12,
+      "enabled": false,
+      "build": {
+        "type": "vqa_jsonl",
+        "args": {
+          "jsonl": "dataset/raw/vqa/train.jsonl",
+          "image_dir": "dataset/raw/vqa/images"
+        }
+      }
+    },
+    {
+      "name": "doc_chart_vqa",
+      "modality": "image_text",
+      "weight": 0.08,
+      "enabled": false,
+      "build": {
+        "type": "vqa_jsonl",
+        "args": {
+          "jsonl": "dataset/raw/docvqa/train.jsonl",
+          "image_dir": "dataset/raw/docvqa/images"
+        }
+      }
+    },
+    {
+      "name": "msrvtt",
+      "modality": "video_text",
+      "weight": 0.1,
+      "enabled": false,
+      "build": {
+        "type": "video_caption_frames",
+        "args": {
+          "jsonl": "dataset/raw/msrvtt/train.jsonl",
+          "frames_root": "dataset/raw/msrvtt/frames"
+        }
+      }
+    },
+    {
+      "name": "voice_assistant",
+      "modality": "speech_text",
+      "weight": 0.08,
+      "enabled": false,
+      "build": {
+        "type": "speech_dialog_parquet",
+        "args": {
+          "parquet": "dataset/raw/VoiceAssistant-400K/train.parquet",
+          "question_col": "question_audio",
+          "answer_col": "answer"
+        }
+      }
+    },
+    {
+      "name": "ultrachat_slam",
+      "modality": "speech_text",
+      "weight": 0.12,
+      "enabled": false,
+      "build": {
+        "type": "speech_dialog_parquet",
+        "args": {
+          "parquet": "dataset/raw/UltraChat-300K-SLAM-Omni/train.parquet",
+          "question_col": "question_audio",
+          "answer_col": "answer",
+          "round_col": "round"
+        }
+      }
+    }
+  ]
+}
